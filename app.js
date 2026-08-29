@@ -150,6 +150,15 @@ if (require.main === module) {
       await init();
     }
 
+    // 分期计划入账定时扫描（静默执行，失败不影响主服务）
+    // 可用 INSTALLMENT_SCAN_ENABLED=false 关闭；首次上线建议先设 INSTALLMENT_SCAN_DRY_RUN=true 观察清单
+    try {
+      const { start: startInstallmentCron } = require("./src/modules/recurring/cron");
+      startInstallmentCron();
+    } catch (e) {
+      console.error("⚠️  分期定时任务注册失败:", e.message);
+    }
+
     console.log(`🚀 服务已启动: http://localhost:${PORT}`);
     console.log(`🌍 环境: ${process.env.NODE_ENV || "dev"}`);
     console.log(`📡 API 地址: http://localhost:${PORT}/api`);

@@ -4,8 +4,36 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 const CreditAccount = require("../../account/model/credit");
+const CardBill = require("../../card/model/bill");
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+// 分期「计划入账日」之后的宽限天数：plan_date ~ plan_date+N 天内可入账，超过即作废。
+// 入账与作废判定均基于 plan_date，二者严格互补、不重叠。
+// 默认 30 天≈一个账单周期：服务短暂停机后仍能补入账，只有整期错过才作废。
+// 如需更严格（如只容忍 7 天）可设 INSTALLMENT_GRACE_DAYS=7。
+const INSTALLMENT_GRACE_DAYS = Number(process.env.INSTALLMENT_GRACE_DAYS) || 30;
+
+// 进程内互斥锁：按 `${分期id}:${月份}` 串行化入账动作，防止定时扫描与 HTTP 请求
+// 并发时双双读到 pending 而重复建流水。仅在单实例部署下有效（多实例需改用 MySQL GET_LOCK）。
+const ENTER_LOCKS = new Map();
+async function withEnterLock(key, fn) {
+  const prev = ENTER_LOCKS.get(key);
+  if (prev) {
+    try {
+      await prev;
+    } catch {
+      /* 前一次失败不影响本次 */
+    }
+  }
+  const task = (async () => fn())();
+  ENTER_LOCKS.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (ENTER_LOCKS.get(key) === task) ENTER_LOCKS.delete(key);
+  }
+}
 
 class RecurringExpense {
   static tableName = "bus_recurring";
@@ -170,6 +198,23 @@ class RecurringExpense {
 
     if (!month) return filtered.map(row => ({ ...row, month_records: this.parseMonthRecords(row.month_records) }));
     return filtered.map(row => this.attachMonthInfo(row, month));
+  }
+
+  /**
+   * 查询全量启用中的分期（跨用户，仅定时扫描 cron 使用）。
+   * 命中口径与 findAll 的 installmentOnly 保持一致。
+   */
+  static async findActiveInstallments() {
+    const [rows] = await db.execute(
+      `SELECT r.* FROM ${this.tableName} r
+       WHERE r.is_deleted = 0 AND r.is_active = 1
+         AND r.repeat_count IS NOT NULL
+         AND r.account_id LIKE '%"type":"installment"%'`
+    );
+    return rows.map((row) => ({
+      ...row,
+      month_records: this.parseMonthRecords(row.month_records),
+    }));
   }
 
   static async findById(id, userId) {
@@ -554,21 +599,63 @@ class RecurringExpense {
    * 将返回的流水 ID 写回 month_records[month].remark，status='entered'。
    */
   /**
-   * 判断某期是否处于可入账的账单周期内：
-   * 当前系统日期落在 month 的 billingDay ~ 下月 billingDay 之间。
-   * 与 enterInstallment 共用，避免周期判定逻辑漂移。
+   * 解析某一期的「计划入账日」plan_date（dayjs，北京时区，已 startOf('day')）：
+   *  - 新数据：取 month_records[month].plan_date，由前端按「首期入账日期 + 入账归属」推算写入。
+   *    用户可选「本月账单 / 次月账单」（不同银行口径不同，如浦发本月入账、工行次月入账），
+   *    创建后每期固定在该月「账单日前 2 天」入账。
+   *  - 存量数据：无 plan_date 时回退旧算法「该期月份 账单日+1」，
+   *    保证历史分期的账单归属（次月账单）与时机判定完全不变。
    */
-  static isWithinBillingCycle(row, month) {
+  static resolvePlanDate(row, month, records = null) {
+    const recs = records || this.parseMonthRecords(row.month_records);
+    const rec = recs?.[month];
+    if (rec?.plan_date) {
+      return dayjs.tz(rec.plan_date, "Asia/Shanghai").startOf("day");
+    }
     const acc = this.parseAccountInfo(row.account_id);
     const billingDay = Number(acc.billing_day) || 1;
     const targetMonth = dayjs.tz(`${month}-01`, "Asia/Shanghai").startOf("month");
-    const cycleStart = targetMonth.date(billingDay);
-    const cycleEnd = targetMonth.add(1, "month").date(billingDay);
-    const now = dayjs().tz("Asia/Shanghai");
-    return !now.isBefore(cycleStart) && !now.isAfter(cycleEnd);
+    return targetMonth.date(Math.min(billingDay + 1, targetMonth.daysInMonth())).startOf("day");
   }
 
+  /**
+   * 是否到达该期入账时机：plan_date <= 今天 <= plan_date + 宽限天数。
+   * 与 isEnterExpired 严格互补，二者不会同时对同一期为真。
+   */
+  static canEnterNow(row, month, records = null) {
+    const planDate = this.resolvePlanDate(row, month, records);
+    const today = dayjs().tz("Asia/Shanghai").startOf("day");
+    return !today.isBefore(planDate) && !today.isAfter(planDate.add(INSTALLMENT_GRACE_DAYS, "day"));
+  }
+
+  /**
+   * 该期是否已超期（超过 plan_date + 宽限天数仍未入账）→ 应自动作废。
+   */
+  static isEnterExpired(row, month, records = null) {
+    const planDate = this.resolvePlanDate(row, month, records);
+    const today = dayjs().tz("Asia/Shanghai").startOf("day");
+    return today.isAfter(planDate.add(INSTALLMENT_GRACE_DAYS, "day"));
+  }
+
+  /**
+   * 该期入账流水归属的账单月。复用 CardBill 的周期规则（不自行推导、不碰 CreditCore）：
+   * 消费日 <= 账单日 → 当月账单；> 账单日 → 次月账单。
+   */
+  static resolveBillMonth(row, month, records = null) {
+    const acc = this.parseAccountInfo(row.account_id);
+    const billingDay = Number(acc.billing_day) || 1;
+    const pd = this.resolvePlanDate(row, month, records);
+    return CardBill.getBillMonthByDate(new Date(pd.year(), pd.month(), pd.date()), billingDay);
+  }
+
+  /**
+   * 分期入账（对外入口）：加进程内互斥锁后执行，避免定时扫描与 HTTP 请求并发重复建流水。
+   */
   static async enterInstallment(id, month, userId) {
+    return withEnterLock(`${id}:${month}`, () => this.enterInstallmentUnsafe(id, month, userId));
+  }
+
+  static async enterInstallmentUnsafe(id, month, userId) {
     const row = await this.findById(id, userId);
     if (!row) throw new Error("分期不存在");
     const records = this.parseMonthRecords(row.month_records);
@@ -594,23 +681,25 @@ class RecurringExpense {
     const billingDay = Number(acc.billing_day) || 1;
     const totalPeriods = Number(acc.total_periods) || Number(row.repeat_count) || 1;
 
-    // 账单周期校验：month 的 billingDay ~ 下月 billingDay（与 isWithinBillingCycle 一致）
-    const targetMonth = dayjs.tz(`${month}-01`, "Asia/Shanghai").startOf("month");
-    if (!this.isWithinBillingCycle(row, month)) {
-      const cycleStart = targetMonth.date(billingDay);
-      const cycleEnd = targetMonth.add(1, "month").date(billingDay);
+    // 入账时机校验：必须已到达该期的计划入账日（账单日前 2 天），且未超宽限期
+    const planDate = this.resolvePlanDate(row, month, records);
+    const today = dayjs().tz("Asia/Shanghai").startOf("day");
+    if (today.isBefore(planDate)) {
       throw new Error(
-        `请在账单周期内触发入账（${cycleStart.format("YYYY-MM-DD")} ~ ${cycleEnd.format("YYYY-MM-DD")}）。入账动作将归属下月账单（${targetMonth
-          .add(1, "month")
-          .format("YYYY-MM")}），当前不在该周期`
+        `该期计划入账日为 ${planDate.format("YYYY-MM-DD")}（账单日前 2 天），尚未到达，暂不入账`
+      );
+    }
+    if (this.isEnterExpired(row, month, records)) {
+      throw new Error(
+        `该期计划入账日 ${planDate.format("YYYY-MM-DD")} 已超过 ${INSTALLMENT_GRACE_DAYS} 天仍未入账，请确认或中止`
       );
     }
 
     // 第几期（按月份升序）
     const sortedMonths = Object.keys(this.parseMonthRecords(row.month_records)).sort();
     const idx = sortedMonths.indexOf(month) + 1;
-    const safeDay = Math.min(billingDay + 1, targetMonth.daysInMonth());
-    const transDate = targetMonth.date(safeDay).format("YYYY-MM-DD");
+    // 流水交易日期 = 计划入账日，账单归属由 CardBill.getBillMonthByDate 决定
+    const transDate = planDate.format("YYYY-MM-DD");
 
     // 复用信用卡消费入账内部方法（事务 + 锁卡 + 额度校验 + CreditCore.syncCardBills），不改动 CreditCore
     const flow = await CreditAccount.create({
@@ -636,6 +725,9 @@ class RecurringExpense {
       ...updated[month],
       status: "entered",
       remark: String(flowId),
+      plan_date: transDate,
+      bill_month: this.resolveBillMonth(row, month, updated),
+      entered_at: dayjs().tz("Asia/Shanghai").format("YYYY-MM-DD HH:mm:ss"),
       done_time: dayjs().tz("Asia/Shanghai").format("YYYY-MM-DD HH:mm:ss"),
     };
     await this.updateMonthRecords(id, userId, updated);
@@ -700,26 +792,23 @@ class RecurringExpense {
   }
 
   /**
-   * 超过期限自动作废：对仍处于 pending / entering(无流水) 但账单周期已结束的期次，
-   * 标记 void（remark="超过期限，自动作废"）。读取事件（日历/列表/提醒）即触发写库，
-   * 保证任何一端 GET 都能即时看到「超过期限」灰态，无需先访问分期列表。
+   * 超过期限自动作废：对仍处于 pending / entering(无流水)，且已过「计划入账日 + 宽限天数」
+   * 仍未入账的期次，标记 void（remark="超过期限，自动作废"）。
+   * 由定时扫描与日历/提醒读取触发写库，保证能看到「超过期限」灰态。
    */
   static async voidExpiredInstallments(row) {
     if (!row || !row.repeat_count) return false;
     const records = this.parseMonthRecords(row.month_records);
-    const acc = this.parseAccountInfo(row.account_id);
-    const billingDay = Number(acc.billing_day) || 1;
-    const today = dayjs().tz("Asia/Shanghai").startOf("day");
     let mutated = false;
     for (const month of Object.keys(records)) {
       const rec = records[month];
       const s = rec.status;
       if (s !== "pending" && !(s === "entering" && !rec.remark)) continue;
-      const transDate = dayjs
-        .tz(`${month}-01`, "Asia/Shanghai")
-        .startOf("month")
-        .date(billingDay + 1);
-      if (transDate.isBefore(today)) {
+      // 超期判定与入账时机判定同源（都基于 plan_date）：
+      //   未到 plan_date      → 等待
+      //   plan_date ~ +宽限   → 可入账
+      //   超过 plan_date+宽限 → 作废
+      if (this.isEnterExpired(row, month, records)) {
         records[month] = {
           ...rec,
           status: "void",
@@ -730,15 +819,17 @@ class RecurringExpense {
         console.warn(`[installment] 超过期限自动作废 id=${row.id} month=${month}`);
       }
     }
-    if (mutated) await this.updateMonthRecords(row.user_id, row.user_id, records);
+    // 修正：此前误传 (row.user_id, row.user_id)，SQL 条件变成 id = user_id，
+    // 不命中任何行且静默无报错 → 自动作废写库从未生效。
+    if (mutated) await this.updateMonthRecords(row.id, row.user_id, records);
     return mutated;
   }
 
   /**
-   * 系统自动入账：对处于账单周期内且尚未入账(pending)的期次，自动触发入账。
-   * 由列表/日历读取时调用，替代前端手动「入账」按钮。
+   * 系统自动入账：对已到达计划入账日且尚未入账(pending)的期次，自动触发入账。
+   * 由定时扫描与列表读取时调用，替代前端手动「入账」按钮。
    * 设计原则：
-   *  - 仅 installment（repeat_count 存在）且 status='pending' 且 isWithinBillingCycle 为真时触发；
+   *  - 仅 installment（repeat_count 存在）且 status='pending' 且 canEnterNow 为真时触发；
    *  - 复用 enterInstallment（entered+remark 幂等防重复，entering 占坑态自愈重入），不改动 CreditCore；
    *  - 单期失败不影响整体（仅告警），保证列表/日历读取始终可用；
    *  - 已 entered/void 的期次会被 enterInstallment 自身拒绝，安全跳过。
@@ -753,25 +844,29 @@ class RecurringExpense {
       return s === "pending" || (s === "entering" && !records[k].remark);
     });
     if (!pendingMonths.length) return;
+    // entering 自愈：无流水占坑 → 复位 pending。必须【先落库】再入账，
+    // 否则入账成功后末尾再用内存旧 records 覆盖，会把 remark(流水ID) 抹掉，破坏防重复入账。
     let mutated = false;
     for (const month of pendingMonths) {
-      let rec = records[month];
-      // entering 自愈：无流水占坑 → 复位 pending 后走正常逻辑
+      const rec = records[month];
       if (rec.status === "entering" && !rec.remark) {
         records[month] = { ...rec, status: "pending", remark: "" };
-        rec = records[month];
         mutated = true;
       }
+    }
+    if (mutated) await this.updateMonthRecords(id, userId, records);
+
+    for (const month of pendingMonths) {
+      const rec = records[month];
       if (rec.status !== "pending") continue;
-      if (!this.isWithinBillingCycle(row, month)) continue; // 不在周期内（含未来期）→ 跳过，由 voidExpiredInstallments 处理过期
-      // 在账单周期内 → 自动入账
+      if (!this.canEnterNow(row, month, records)) continue; // 未到计划入账日（含未来期）→ 跳过；已超期 → 由 voidExpiredInstallments 作废
+      // 已到达计划入账日 → 自动入账
       try {
         await this.enterInstallment(id, month, userId);
       } catch (e) {
         console.warn(`[installment] 自动入账失败 id=${id} month=${month}:`, e.message);
       }
     }
-    if (mutated) await this.updateMonthRecords(id, userId, records);
   }
 
   /**
@@ -783,18 +878,29 @@ class RecurringExpense {
     const records = this.parseMonthRecords(row.month_records);
     const acc = this.parseAccountInfo(row.account_id);
     const cardId = acc.card_id;
+    // 补齐每期的计划入账日与归属账单月（存量数据用回退算法补齐）。
+    // 仅用于接口展示，不写库。
+    Object.keys(records).forEach((month) => {
+      const rec = records[month] || {};
+      if (!rec.plan_date) {
+        rec.plan_date = this.resolvePlanDate(row, month, records).format("YYYY-MM-DD");
+      }
+      if (!rec.bill_month) {
+        rec.bill_month = this.resolveBillMonth(row, month, records);
+      }
+      records[month] = rec;
+    });
     if (!cardId) return records;
-    const billingDay = Number(acc.billing_day) || 1;
     const enteredMonths = Object.keys(records).filter((k) => records[k].status === "entered");
     if (!enteredMonths.length) return records;
-    // 入账流水 transDate = 账单月 billingDay+1（day>billDay），按账单规则归属【下月】账单。
-    // 因此不能用 installment 的 month 键查 card_bill.bill_month，需按真实账单月推算查询。
+    // 账单归属由「计划入账日」经 CardBill 周期规则推导（不自行 +1 个月）：
+    //  - 本月入账（浦发口径）：plan_date <= 账单日 → 归属当月账单
+    //  - 次月入账（工行口径）：plan_date >  账单日 → 归属次月账单
+    //  - 存量分期无 plan_date 时回退为「该期月份 账单日+1」→ 仍归属次月账单，行为不变
     const billMonths = new Set();
     const monthToBillMonth = {};
     enteredMonths.forEach((month) => {
-      const targetMonth = dayjs.tz(`${month}-01`, "Asia/Shanghai").startOf("month");
-      // day = billingDay+1 > billingDay 恒成立 → 归属下月账单
-      const billMonth = targetMonth.add(1, "month").format("YYYY-MM");
+      const billMonth = this.resolveBillMonth(row, month, records);
       monthToBillMonth[month] = billMonth;
       billMonths.add(billMonth);
     });
