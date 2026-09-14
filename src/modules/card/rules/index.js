@@ -109,8 +109,27 @@ exports.updateCard = {
       cardImg: joi.string().allow('', null),
       openDate: joi.string().allow('', null),
       expireDate: joi.string().allow('', null),
-      billDay: joi.number().integer().min(1).max(31).allow(null),
-      repayDay: joi.number().integer().min(1).max(31).allow(null),
+      // 账单日/还款日：与建卡规则保持一致——仅信用卡要求 1-31，借记卡允许 0（建卡时 default(0) 写入的值）
+      billDay: joi.number().allow(null).when('cardType', {
+        is: 'credit',
+        then: joi.number().integer().min(1).max(31).allow(null).messages({
+          "number.base": "billDay 账单日必须是数字",
+          "number.integer": "billDay 账单日必须是整数",
+          "number.min": "billDay 账单日必须在 1-31 之间",
+          "number.max": "billDay 账单日必须在 1-31 之间",
+        }),
+        otherwise: joi.number().allow(null),
+      }),
+      repayDay: joi.number().allow(null).when('cardType', {
+        is: 'credit',
+        then: joi.number().integer().min(1).max(31).allow(null).messages({
+          "number.base": "repayDay 还款日必须是数字",
+          "number.integer": "repayDay 还款日必须是整数",
+          "number.min": "repayDay 还款日必须在 1-31 之间",
+          "number.max": "repayDay 还款日必须在 1-31 之间",
+        }),
+        otherwise: joi.number().allow(null),
+      }),
       currency: joi.string().allow('', null),
       status: joi.string().allow('', null),
       isDefault: joi.boolean(),

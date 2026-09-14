@@ -70,6 +70,8 @@ class AccountBalanceController {
       WHERE ab.user_id = ? AND ab.is_deleted = 0
       ORDER BY 
         CASE WHEN ab.card_id IN ('xxxx', 'yyyy') THEN 0 ELSE 1 END,
+        COALESCE(cb.is_default, 0) DESC,
+        COALESCE(cb.sort, 99) ASC,
         ab.card_id
     `;
     const [rows] = await db.execute(query, [userId]);
