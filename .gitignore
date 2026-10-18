@@ -1,0 +1,53 @@
+# 日志文件
+logs/*.log
+*.log
+
+# 环境变量（含邮箱密码/密钥/第三方 Key）
+.env
+.env.*
+!.env.example
+
+# 密钥文件
+rsa_key.pem
+*.pem
+*.key
+*.p12
+
+# 运行时数据（上传文件、备份 SQL）
+data/
+public/uploads/
+tmp/
+temp/
+
+# 内部文档与内部脚本（含架构/漏洞/本机路径信息，不对外公开）
+PLAN.md
+PLAN1.md
+CONVENTIONS.md
+interop-check.mjs
+
+# 开发期回归脚本（命名绑定 SYNC-Axx 任务号，AI 移植过程产物，不对外公开）
+# 其余 *_test.go 为工程常驻单测（httptest 内存级），正常入库
+internal/mod/account/sync_a40_test.go
+internal/mod/cardbill/sync_a40_test.go
+internal/mod/todo/sync_a40_test.go
+internal/mod/recurring/sync_a41_test.go
+internal/mod/fund/sync_a43_test.go
+internal/mod/card/rules_sync_a39_test.go
+internal/resp/sync_a42_test.go
+internal/resp/sync_a44_test.go
+
+# 构建产物
+api-go.exe
+*.exe
+build/
+dist/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
