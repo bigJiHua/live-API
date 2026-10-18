@@ -213,6 +213,12 @@ class FundController {
       await syncFundLatestHistory(id, req.userId);
       res.json({ status: 200, message: '记录成功', data: { id: historyId } });
     } catch (e) {
+      // 🔄 2026-10-13（api.md P2-10）：唯一键 uk_fund_record_date 建立后，
+      //    并发双写（查重未命中→双 INSERT）由 DB 兜底抛 ER_DUP_ENTRY。
+      //    转成与上方查重一致的友好 400，不再裸 500。
+      if (e.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ status: 400, message: '该日期已有记录，请编辑或删除' });
+      }
       console.error('写入净值历史错误:', e);
       res.status(500).json({ status: 500, message: '写入失败', error: e.message });
     }

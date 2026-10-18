@@ -1,5 +1,10 @@
 const CreditAccount = require('../model/credit');
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 /**
  * 信用卡账务控制器
  * 处理信用卡消费的创建、更新、冲正
@@ -12,7 +17,7 @@ class CreditController {
     try {
       const transaction = await CreditAccount.create({
         userId: req.userId,
-        ...req.body.data,
+        ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
       });
 
       return res.status(200).json({
@@ -24,7 +29,7 @@ class CreditController {
       console.error("创建信用卡消费记录错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "创建失败"
+        ...buildErrorBody("创建失败", error)
       });
     }
   }
@@ -48,7 +53,7 @@ class CreditController {
       console.error("更新信用卡消费记录错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "更新失败"
+        ...buildErrorBody("更新失败", error)
       });
     }
   }
@@ -105,7 +110,7 @@ class CreditController {
       console.error("信用卡还款撤销错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "撤销失败"
+        ...buildErrorBody("撤销失败", error)
       });
     }
   }

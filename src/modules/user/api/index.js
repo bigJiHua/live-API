@@ -17,15 +17,10 @@ router.put(
   authController.updateProfile
 );
 
-// 获取用户设置
-router.get("/settings", authController.getSettings);
-
-// 更新用户设置
-router.put("/settings", authController.updateSettings);
-
-// 【启用】发送邮箱验证码（增加频率限制中间件）
+// 【已启用】发送邮箱验证码（增加频率限制中间件 + Joi 规则剥离伪造字段）
 router.post(
   "/email/send-code",
+  createValidator(UserRules.emailSendCode),
   emailCodeRateLimit,
   authController.sendEmailCode
 );

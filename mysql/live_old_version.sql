@@ -385,7 +385,7 @@ CREATE TABLE IF NOT EXISTS `card_repay` (
 DROP TABLE IF EXISTS `device_crypto`;
 CREATE TABLE IF NOT EXISTS `device_crypto` (
   `fingerprint` varchar(64) COLLATE utf8mb4_bin NOT NULL COMMENT '浏览器指纹',
-  `aes_key` varchar(64) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '临时AES密钥',
+  `aes_key` varchar(191) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '临时AES密钥（P1-9起为enc.v1:密文，邮件行为userId明文）',
   `aes_expires_at` bigint(20) DEFAULT NULL COMMENT 'AES过期时间',
   `captcha_code` varchar(10) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '验证码',
   `captcha_expires_at` bigint(20) DEFAULT NULL COMMENT '验证码过期时间',

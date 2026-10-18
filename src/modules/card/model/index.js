@@ -87,9 +87,13 @@ class Card {
    * 获取卡片列表 - 根据卡类型返回不同字段
    * 自动初始化虚拟账户（如果不存在）
    */
-  static async findAll(userId, filters = {}) {
+  static async findAll(userId, filters = {}, executor) {
     // 确保虚拟账户已初始化
     await this.initVirtualCards(userId);
+    // 🔄 2026-10-13（api.md P2-6）：executor 透传——aggregate 在事务内被调用时
+    //    （AccountSettlement.validate → CreditCore.aggregate(user_id, conn)），
+    //    查询必须走同一连接才能读到事务内未提交数据。不传时行为不变。
+    const ex = executor || db;
 
     let whereClause = `WHERE ${this.tableName}.user_id = ? AND ${this.tableName}.is_deleted = 0`;
     const params = [userId];
@@ -121,7 +125,7 @@ class Card {
         ${whereClause}
         ORDER BY ${this.tableName}.is_default DESC, ${this.tableName}.sort ASC, ${this.tableName}.create_time DESC
       `;
-      const [rows] = await db.execute(query, params);
+      const [rows] = await ex.execute(query, params);
       return rows;
     } else if (filters.cardType === 'debit') {
       // 借记卡返回基础字段
@@ -133,7 +137,7 @@ class Card {
         ${whereClause}
         ORDER BY ${this.tableName}.is_default DESC, ${this.tableName}.sort ASC, ${this.tableName}.create_time DESC
       `;
-      const [rows] = await db.execute(query, params);
+      const [rows] = await ex.execute(query, params);
       return rows;
     } else {
       // 不筛选时默认返回信用卡字段
@@ -147,17 +151,21 @@ class Card {
         ${whereClause}
         ORDER BY ${this.tableName}.is_default DESC, ${this.tableName}.sort ASC, ${this.tableName}.create_time DESC
       `;
-      const [rows] = await db.execute(query, params);
+      const [rows] = await ex.execute(query, params);
       return rows;
     }
   }
 
   /**
    * 根据ID查找卡片
+   * 🔄 2026-10-13（api.md P2-6）：新增 executor 参数——CreditCore 在事务内重算账单时，
+   *    findById 原先走全局 db 读不到事务内未提交的卡变更（如改 bill_day 后重算用旧值）。
+   *    不传时行为不变（全局 db），现有调用方零影响。
    */
-  static async findById(id, userId) {
+  static async findById(id, userId, executor) {
+    const ex = executor || db;
     const query = `SELECT * FROM ${this.tableName} WHERE id = ? AND user_id = ? AND is_deleted = 0`;
-    const [rows] = await db.execute(query, [id, userId]);
+    const [rows] = await ex.execute(query, [id, userId]);
     return rows[0] || null;
   }
 
@@ -442,30 +450,44 @@ class Card {
    * 删除卡片
    * - 只删除 account_balance（余额数据无意义）
    * - 其他关联数据（账单/还款/流水/日志）保留，查询时用 is_deleted=0 过滤
+   * 🔒 2026-10-13（api.md P2-8）：三条 UPDATE 包事务——原先各自自动提交，
+   *    第二条（account）失败时 account_balance 已软删而卡片/流水未删，
+   *    数据不一致（实测触发器注入复现）。现任一失败整体回滚。
    */
   static async delete(id, userId) {
     const now = String(Date.now());
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // 1. 删除关联的账户余额
-    await db.execute(
-      `UPDATE account_balance SET is_deleted = 1, update_time = ? WHERE card_id = ? AND user_id = ?`,
-      [now, id, userId]
-    );
+      // 1. 删除关联的账户余额
+      await conn.execute(
+        `UPDATE account_balance SET is_deleted = 1, update_time = ? WHERE card_id = ? AND user_id = ?`,
+        [now, id, userId]
+      );
 
-    // 2. 删除关联的流水记录（可选，如需清理）
-    await db.execute(
-      `UPDATE account SET is_deleted = 1, update_time = ? WHERE card_id = ? AND user_id = ?`,
-      [now, id, userId]
-    );
+      // 2. 删除关联的流水记录（可选，如需清理）
+      await conn.execute(
+        `UPDATE account SET is_deleted = 1, update_time = ? WHERE card_id = ? AND user_id = ?`,
+        [now, id, userId]
+      );
 
-    // 3. 软删除卡片主表
-    const query = `
-      UPDATE ${this.tableName}
-      SET is_deleted = 1, update_time = ?
-      WHERE id = ? AND user_id = ?
-    `;
-    const [result] = await db.execute(query, [now, id, userId]);
-    return result.affectedRows > 0;
+      // 3. 软删除卡片主表
+      const query = `
+        UPDATE ${this.tableName}
+        SET is_deleted = 1, update_time = ?
+        WHERE id = ? AND user_id = ?
+      `;
+      const [result] = await conn.execute(query, [now, id, userId]);
+
+      await conn.commit();
+      return result.affectedRows > 0;
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
   }
 
   /**

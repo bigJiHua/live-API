@@ -15,18 +15,13 @@ const cardRouter = require("../modules/card/api");
 const cardBillRouter = require("../modules/card/api/bill");
 const cardRepayRouter = require("../modules/card/api/repay");
 const userRouter = require("../modules/user/api");
-const databaseRouter = require("./database");
 const uploadRouter = require("../modules/upload/api");
 const momentRouter = require("../modules/moment/api");
-const bankRouter = require("../modules/category/api/bank");
 const assetRouter = require("../modules/asset/api");
 const todoRouter = require("../modules/todo/api");
 const workRouter = require("../modules/work/api");
 const fixedAssetRouter = require("../modules/fixed_asset/api");
 const budgetRouter = require("../modules/budget/api");
-const dashboardRouter = require("../modules/dashboard/api");
-const resourceRouter = require("../modules/resource/api");
-const bankCategoryRouter = require("../modules/bankCategory/api");
 const flowRouter = require("../modules/flow/api");
 const dataManagerRouter = require("../modules/dataManager/api");
 const fundRouter = require("../modules/fund/api");
@@ -45,18 +40,16 @@ router.use("/card/bill", cardBillRouter); // 卡片账单
 router.use("/card/repay", cardRepayRouter); // 卡片还款
 router.use("/card", cardRouter); // 卡片管理
 router.use("/user", userRouter); // 用户管理
-router.use("/database", databaseRouter); // 数据库只读管理（管理员）
 router.use("/upload", uploadRouter); // 文件上传
 router.use("/moment", momentRouter); // 动态/日记
-router.use("/bank", bankRouter); // 银行分类
 router.use("/asset", assetRouter); // 资产快照与登记
 router.use("/todo", todoRouter); // 待办日程
 router.use("/work", workRouter); // 工作与工资
 router.use("/fixedAsset", fixedAssetRouter); // 固定资产管理
 router.use("/budget", budgetRouter); // 预算管理
-// router.use("/dashboard", dashboardRouter); // 仪表盘（桌面端新增）【未启用】
-router.use("/resource", resourceRouter); // 文件资源管理（桌面端新增）
-router.use("/bank-category", bankCategoryRouter); // 银行分类管理（桌面端新增）
+// 🔒 2026-10-13（api.md §11 冗余接口清理）：整组删除 /bank（银行分类走 /category?type=bank）、
+//    /bank-category、/resource（走 /upload）、/database（管理页调错前缀不可达，public 页一并删）、
+//    /dashboard（从未挂载）。API_Go 同步删除，两端保持一致。
 router.use("/flow", flowRouter); // 流水详情/日历（桌面端新增）
 router.use("/data-manager", dataManagerRouter); // 数据管理（备份/导出/导入）
 router.use("/fund", fundRouter); // 理财投资模块

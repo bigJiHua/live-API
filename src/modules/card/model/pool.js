@@ -124,8 +124,13 @@ class CreditPool {
     return updated;
   }
 
-  static async findById(id, userId) {
-    const [rows] = await db.execute(
+  /**
+   * 🔄 2026-10-13（api.md P2-6）：新增 executor 参数——CreditCore.aggregate 在事务内
+   *    查询池信息时须走同一连接（读事务内未提交数据）。不传时行为不变。
+   */
+  static async findById(id, userId, executor) {
+    const ex = executor || db;
+    const [rows] = await ex.execute(
       `SELECT * FROM ${TABLE} WHERE id = ? AND user_id = ? AND is_deleted = 0`,
       [id, userId]
     );

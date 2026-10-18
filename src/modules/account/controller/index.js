@@ -1,5 +1,10 @@
 const Account = require("../model");
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 /**
  * 账务记录控制器（通用层）
  * 仅处理只读查询、备注修改、统计。
@@ -127,7 +132,10 @@ class AccountController {
    */
   async updateRemark(req, res) {
     try {
-      const { remark } = req.body;
+      // 🔄 2026-10-13 修复（api.md F-B）：双路径兼容。
+      //    加密客户端（APP PATCH encrypted=true）解密后 remark 在 req.body.data.remark；
+      //    明文客户端（web PATCH 不加密）在 req.body.remark。
+      const { remark } = req.body.data || req.body;
 
       if (remark === undefined) {
         return res.status(400).json({
@@ -154,7 +162,7 @@ class AccountController {
       console.error("修改备注错误:", error);
       return res.status(500).json({
         status: 500,
-        message: error.message || "修改失败"
+        ...buildErrorBody("修改失败", error)
       });
     }
   }
@@ -169,7 +177,7 @@ class AccountController {
       return res.json({ status: 200, message: "获取成功", data: result });
     } catch (error) {
       console.error("获取转账明细错误:", error);
-      return res.status(400).json({ status: 400, message: error.message || "获取失败" });
+      return res.status(400).json({ status: 400, ...buildErrorBody("获取失败", error) });
     }
   }
 
@@ -226,29 +234,6 @@ class AccountController {
     } catch (error) {
       console.error("获取卡片近月收支笔数错误:", error);
       return res.say("获取失败", 500);
-    }
-  }
-
-  /**
-   * 获取全量统计
-   */
-  async getAllStats(req, res) {
-    try {
-      const now = new Date();
-      const year = parseInt(req.query.year) || now.getFullYear();
-      const month = parseInt(req.query.month) || now.getMonth() + 1;
-      const stats = await Account.getAllStats(req.userId, year, month);
-      return res.json({
-        status: 200,
-        message: "获取成功",
-        data: stats,
-      });
-    } catch (error) {
-      console.error("获取全量统计错误:", error);
-      return res.status(500).json({
-        status: 500,
-        message: error.message || "获取失败"
-      });
     }
   }
 }

@@ -266,11 +266,20 @@ class WorkSalary {
       ]);
     } else {
       id = idUtils.billId();
+      // 🔄 2026-10-13（api.md P2-10）：INSERT 改 INSERT ... ON DUPLICATE KEY UPDATE。
+      //    唯一键 uk_salary_job_date(job_id, work_date) 建立后，"先查后插"的并发窗口
+      //    （两个请求同时查不到 → 双 INSERT）由 DB 兜底：第二个自动变 UPDATE，
+      //    不再 ER_DUP_ENTRY 500，幂等且数据正确。
       const query = `
-        INSERT INTO ${this.tableName} 
-        (id, user_id, job_id, job_type, work_date, work_date_dt, work_hours, day_salary, subsidy, 
+        INSERT INTO ${this.tableName}
+        (id, user_id, job_id, job_type, work_date, work_date_dt, work_hours, day_salary, subsidy,
          social, fund, tax, cut, income, status, remark, is_deleted)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON DUPLICATE KEY UPDATE
+          day_salary = VALUES(day_salary), subsidy = VALUES(subsidy),
+          social = VALUES(social), fund = VALUES(fund), tax = VALUES(tax),
+          cut = VALUES(cut), income = VALUES(income), work_hours = VALUES(work_hours),
+          status = VALUES(status), remark = VALUES(remark)
       `;
       await db.execute(query, [
         id, userId, jobId, job.job_type, workDate, workDate, salary.work_hours,
@@ -279,9 +288,11 @@ class WorkSalary {
       ]);
     }
 
+    // 🔄 2026-10-13（api.md P2-10）：按业务键查真实行（而非按新生成的 id）——
+    //    upsert 触发 ON DUPLICATE 时实际行是已存在的旧 id，按新 id 查会为空。
     const [rows] = await db.execute(
-      `SELECT * FROM ${this.tableName} WHERE id = ?`,
-      [id]
+      `SELECT * FROM ${this.tableName} WHERE job_id = ? AND work_date = ? AND is_deleted = 0`,
+      [jobId, workDate]
     );
     return rows[0];
   }
@@ -322,11 +333,18 @@ class WorkSalary {
       const salary = this.calculateFormalSalary(formalJob, dateStr);
       if (salary) {
         const id = idUtils.billId();
+        // 🔄 2026-10-13（api.md P2-10）：同 saveDaySalary，upsert 化。
+        //    补录与用户手动保存并发时，"已存在"集合可能过期 ⇒ DB 唯一键兜底。
         await db.execute(
-          `INSERT INTO ${this.tableName} 
-           (id, user_id, job_id, job_type, work_date, work_date_dt, work_hours, day_salary, subsidy, 
+          `INSERT INTO ${this.tableName}
+           (id, user_id, job_id, job_type, work_date, work_date_dt, work_hours, day_salary, subsidy,
             social, fund, tax, cut, income, status, remark, is_deleted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+           ON DUPLICATE KEY UPDATE
+             day_salary = VALUES(day_salary), subsidy = VALUES(subsidy),
+             social = VALUES(social), fund = VALUES(fund), tax = VALUES(tax),
+             cut = VALUES(cut), income = VALUES(income), work_hours = VALUES(work_hours),
+             status = VALUES(status), remark = VALUES(remark)`,
           [id, userId, formalJob.id, salary.job_type, dateStr, dateStr, salary.work_hours,
            salary.day_salary, salary.subsidy, salary.social, salary.fund, salary.tax, salary.cut,
            salary.income, salary.status, salary.remark]

@@ -1,4 +1,9 @@
 const AssetSnapshot = require('../model/snapshot');
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 const AssetRegister = require('../model/register');
 
 /**
@@ -24,7 +29,7 @@ class AssetController {
       console.error('获取首页资产错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '获取失败'
+        ...buildErrorBody('获取失败', error)
       });
     }
   }
@@ -53,7 +58,7 @@ class AssetController {
       console.error('获取快照列表错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '获取失败'
+        ...buildErrorBody('获取失败', error)
       });
     }
   }
@@ -77,7 +82,7 @@ class AssetController {
       console.error('获取登记列表错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '获取失败'
+        ...buildErrorBody('获取失败', error)
       });
     }
   }
@@ -88,7 +93,7 @@ class AssetController {
   async createRegister(req, res) {
     try {
       const userId = req.userId;
-      const { total_asset, credit_debt, total_balance, asset_details, remark } = req.body.data;
+      const { total_asset, credit_debt, total_balance, asset_details, remark } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       if (total_asset === undefined || credit_debt === undefined || total_balance === undefined) {
         return res.status(400).json({
@@ -115,7 +120,7 @@ class AssetController {
       console.error('登记资产错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '登记失败'
+        ...buildErrorBody('登记失败', error)
       });
     }
   }
@@ -127,7 +132,7 @@ class AssetController {
     try {
       const userId = req.userId;
       const { id } = req.params;
-      const { total_asset, credit_debt, total_balance, asset_details, remark } = req.body.data;
+      const { total_asset, credit_debt, total_balance, asset_details, remark } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       const result = await AssetRegister.update(id, userId, {
         total_asset,
@@ -153,7 +158,7 @@ class AssetController {
       console.error('更新登记错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '更新失败'
+        ...buildErrorBody('更新失败', error)
       });
     }
   }
@@ -183,7 +188,7 @@ class AssetController {
       console.error('删除登记错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '删除失败'
+        ...buildErrorBody('删除失败', error)
       });
     }
   }
@@ -214,7 +219,7 @@ class AssetController {
       console.error('获取登记详情错误:', error);
       return res.status(500).json({
         status: 500,
-        message: error.message || '获取失败'
+        ...buildErrorBody('获取失败', error)
       });
     }
   }

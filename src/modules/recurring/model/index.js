@@ -5,6 +5,8 @@ const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 const CreditAccount = require("../../account/model/credit");
 const CardBill = require("../../card/model/bill");
+// 🔄 2026-10-13（api.md P1-6）：补偿撤销流水后需要重算账单
+const CreditCore = require("../../card/core/CreditCore");
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
@@ -702,6 +704,18 @@ class RecurringExpense {
     const transDate = planDate.format("YYYY-MM-DD");
 
     // 复用信用卡消费入账内部方法（事务 + 锁卡 + 额度校验 + CreditCore.syncCardBills），不改动 CreditCore
+    // 🔄 2026-10-13 修复（api.md P1-6）：占坑 + 补偿，保证"建流水"与"改期次状态"最终一致。
+    //   原实现：CreditAccount.create（独立事务已提交）→ updateMonthRecords（另一连接），
+    //   两步非原子 —— 中间失败/进程崩溃后 month_records 仍是 pending，重试会重复建流水。
+    //   现实现：
+    //     ① 先置 entering（无流水ID占坑）—— 若 create 前任何一步失败，
+    //        上方自愈逻辑（entering 且 remark 为空 → 复位 pending）允许重试；
+    //     ② create 成功后写 entered + flowId —— 若这一步失败，
+    //        补偿软删刚提交的流水并重算账单，再抛错（month_records 与账本一致，可安全重试）。
+    const occupying = this.parseMonthRecords(row.month_records);
+    occupying[month] = { ...occupating[month], status: "entering", remark: "" };
+    await this.updateMonthRecords(id, userId, occupying);
+
     const flow = await CreditAccount.create({
       userId,
       direction: 0,
@@ -730,7 +744,25 @@ class RecurringExpense {
       entered_at: dayjs().tz("Asia/Shanghai").format("YYYY-MM-DD HH:mm:ss"),
       done_time: dayjs().tz("Asia/Shanghai").format("YYYY-MM-DD HH:mm:ss"),
     };
-    await this.updateMonthRecords(id, userId, updated);
+    try {
+      await this.updateMonthRecords(id, userId, updated);
+    } catch (e) {
+      // 补偿：流水已提交但期次状态没写上 → 软删流水 + 重算账单，
+      // 保证 month_records 与账本一致（该期回到 entering 无 remark 态，自愈后可重试，不会重复入账）
+      console.error(`[installment] 期次状态写入失败，撤销本次入账 id=${id} month=${month} flow=${flowId}:`, e);
+      try {
+        await db.execute(
+          "UPDATE account SET is_deleted = 1, update_time = ? WHERE id = ? AND user_id = ?",
+          [String(Date.now()), flowId, userId]
+        );
+        await CreditCore.syncCardBills(acc.card_id, userId);
+      } catch (compErr) {
+        // 补偿自身失败：留下 entering 占坑 + 已提交流水，需人工对账（绝不静默）
+        console.error(`[installment] 补偿失败，需人工对账 id=${id} month=${month} flow=${flowId}:`, compErr);
+        throw new Error(`入账状态更新失败且补偿失败，请人工对账（流水 ${flowId}）`);
+      }
+      throw new Error(`入账状态更新失败，已撤销本次流水（${flowId}），请重试`);
+    }
 
     return { flowId, month, idx, transDate };
   }

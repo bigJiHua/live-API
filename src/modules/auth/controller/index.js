@@ -8,9 +8,38 @@ const UserLog = require("../model/log");
 const CryptoJS = require("crypto-js");
 const { sendVerificationEmail } = require("../../../common/utils/mailer");
 const db = require("../../../common/config/db");
+// 安全整改 P1-9：握手行 aes_key 字段加密（GCM）
+const fieldCrypto = require("../../../common/utils/fieldCrypto");
+const {
+  clearVerifiedSession,
+} = require("../../../common/middleware/pinSecurityGuard");
+// 安全整改 P0-2/P1-14：登录失败锁定（失败驱动）+ 防用户枚举
+const accountLockCheck = require("../../../common/middleware/accountLockCheck");
+// 安全整改 P1-15/P1-10：日志字段服务端采集 + 错误详情生产脱敏（公共实现）
+const {
+  buildServerSideLogFields,
+  buildErrorBody,
+  maskEmail,
+} = require("../../../common/utils/logFields");
+// 安全整改 P0-5：认证 Cookie（httpOnly，web 端不再依赖 localStorage）
+const {
+  setAuthCookie,
+  clearAuthCookie,
+  resolveTokenTtlSec,
+} = require("../../../common/utils/authCookie");
 // 核心步骤：注册插件
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+// 注：日志字段采集与错误详情脱敏的公共实现见 `src/common/utils/logFields.js`
+//     （buildServerSideLogFields / buildErrorBody）。
+//     本文件只引用、不再各自维护一份，避免多处实现漂移。
+//
+//   背景（P1-15）：旧写法 `{ user_id, type, ...clientData }` 把客户端整个 body
+//   展开进 UserLog.append。INSERT虽参数化（无注入），但 append 会按固定键名读
+//   login_ip / path / fingerprint 等 ⇒ 客户端塞同名键即可**伪造审计日志**。
+//   背景（P1-10）：旧写法 `res.json({ message, error: error.message })` 把内部
+//   报错细节回给客户端，且因handler 自行 res.json 而永远绕过了 errorHandler。
 
 class AuthController {
   // 用户注册
@@ -52,17 +81,17 @@ class AuthController {
       });
     } catch (error) {
       console.error("注册错误:", error);
-      res.status(500).json({ message: "注册失败", error: error.message });
+      res.status(500).json({ ...buildErrorBody("注册失败", error) });
     }
   }
 
   // 【已启用】
   // 用户登录：增加了对解密后数据的兼容处理
   async login(req, res) {
-    // 这里的 req.body 已经是经过 decryptWithSecurity 中间件解密后的完整对象了
-    const clientData = req.body;
+    // ⚠ 安全整改 P1-15：这里**不再**把 `req.body`（客户端可控）整体当作日志字段，
+    //    登录日志一律走 buildServerSideLogFields() 从服务端可信来源采集。
 
-    const { nameOrEmail, password: rawPassword } = req.body.data;
+    const { nameOrEmail, password: rawPassword } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）：authSecurityData 对明文请求直接放行，须双路径
     // 安全键盘字符级 RSA 加密：password 为密文字符数组时解密为明文再校验；
     // 兼容旧版：普通字符串直接使用
     const password = require("../../../common/utils/rsaKeys").resolvePassword(
@@ -75,12 +104,22 @@ class AuthController {
       }
 
       // 2. 查找用户
+      //    ⚠ `req.checkedUser` 由 accountLockCheck 前置中间件查好并挂上，复用它避免重复查库。
+      //    兜底再查一次，以防中间件被摘除或抛错走了 catch 分支。
       const user =
+        req.checkedUser ||
         (await User.findByEmail(nameOrEmail)) ||
         (await User.findByUsername(nameOrEmail));
 
+      //    安全整改 P1-14：防用户枚举。
+      //    正常路径下中间件已拦截「用户不存在」，这里是对齐用的兜底分支 ——
+      //    必须与中间件返回**完全相同**的状态码与文案，且同样计入失败次数。
       if (!user) {
-        return res.status(404).json({ message: "用户不存在" });
+        accountLockCheck.recordLoginFailure(nameOrEmail);
+        return res.say(
+          accountLockCheck.GENERIC_AUTH_ERROR,
+          accountLockCheck.GENERIC_AUTH_STATUS
+        );
       }
 
       // 3. 检查设备锁定状态 (利用中间件挂载的 req.device)
@@ -98,17 +137,35 @@ class AuthController {
       const isValid = await User.verifyPassword(password, user.login_pwd);
 
       if (!isValid) {
-        // 🔴 登录失败统计
+        // 🔴 登录失败统计（安全整改 P0-2：失败驱动 + 锁定）
+        //    计数发生在「确认密码错误」之后 —— 旧实现在中间件里每收一次请求就 +1，
+        //    导致正常用户连点 10 次登录也会被锁 60s，而真正暴破反而不受额外惩罚。
+        const failure = accountLockCheck.recordLoginFailure(nameOrEmail);
+
+        //    ✅ P1-15：日志字段全部由服务端采集，客户端 body 不再参与（防日志伪造）
         await UserLog.append({
-          user_id: user.id,
+          ...buildServerSideLogFields(req, user.id),
           type: "failed",
           status: 0,
           error_message: "密码错误",
-          ...clientData, // 自动解构 request 传来的 login_ip, login_location 等所有字段
         });
 
-        // 更新该指纹的失败计数 (db逻辑省略)
-        return res.say("用户名或密码错误", 404);
+        // 达到阈值 ⇒ 明确告知锁定时长；
+        // 未达阈值时**不提示"还剩几次"（会让攻击者精确定位阈值）
+        if (failure.locked) {
+          return res.status(423).json({
+            status: 423,
+            message: `登录失败次数过多，账号已临时锁定 ${Math.ceil(
+              failure.remainingMs / 60000
+            )} 分钟`,
+            locked: true,
+          });
+        }
+        // ⚠ 文案与状态码必须和「用户不存在」分支逐字一致（防枚举 P1-14）
+        return res.say(
+          accountLockCheck.GENERIC_AUTH_ERROR,
+          accountLockCheck.GENERIC_AUTH_STATUS
+        );
       }
 
       // 5. 生成 Token
@@ -127,14 +184,30 @@ class AuthController {
       );
 
       // 6. 🟢 登录成功统计
-      // 这里的 append 会把 clientData 里的 ip, location, isp, viewport 等全部存入 login_log
+      //    ✅ P0-2：登录成功 ⇒ 清零该账号的失败计数
+      //       （否则用户输对了密码，额度仍被占用，下次输错一次就又被锁）
+      accountLockCheck.clearLoginFailures(nameOrEmail);
+
+      //    ✅ P1-15：改用服务端采集的日志字段，不再展开客户端 body
       await UserLog.append({
-        user_id: user.id,
+        ...buildServerSideLogFields(req, user.id),
         type: "login",
-        token: token.substring(0, 50), // 只存存根
         status: 1,
-        ...clientData,
+        token, // UserLog.append 内部只存前 50 字符
       });
+
+      // 🔒 安全整改 P0-5：登录成功同时下发 httpOnly Cookie。
+      //    web端凭此不再需要把 token 放进 localStorage ⇒ XSS 窃取无效。
+      //    APP / webview-APP 仍走 Authorization 头，不受影响（authGuard 是双通道）。
+      //    失败**不能**让登录失败 —— 客户端可退回 Bearer 方式。
+      try {
+        setAuthCookie(res, token, resolveTokenTtlSec());
+      } catch (cookieErr) {
+        console.warn(
+          "[登录] 下发认证 Cookie 失败（客户端将退回 Bearer 通道）:",
+          cookieErr && cookieErr.message
+        );
+      }
 
       return res.status(200).json({
         message: "登录成功!",
@@ -178,7 +251,7 @@ class AuthController {
       console.error("获取用户信息错误:", error);
       res
         .status(500)
-        .json({ message: "获取用户信息失败", error: error.message });
+        .json({ ...buildErrorBody("获取用户信息失败", error) });
     }
   }
 
@@ -208,6 +281,9 @@ class AuthController {
         [userId, '/lock-system', 'lock', '系统锁定']
       );
 
+      // 关键：清掉内存里的 30 秒放行会话，否则锁定后仍会命中放行窗口直接返回真实数据
+      clearVerifiedSession(userId);
+
       res.status(200).json({
         code: 8303,
         status: 200,
@@ -216,7 +292,7 @@ class AuthController {
       });
     } catch (error) {
       console.error("锁定系统错误:", error);
-      res.status(500).json({ message: "锁定失败", error: error.message });
+      res.status(500).json({ ...buildErrorBody("锁定失败", error) });
     }
   }
 
@@ -241,14 +317,18 @@ class AuthController {
       });
     } catch (error) {
       console.error("获取登录日志错误:", error);
-      res.status(500).json({ message: "获取登录日志失败", error: error.message });
+      res.status(500).json({ ...buildErrorBody("获取登录日志失败", error) });
     }
   }
 
   // 刷新 Token（支持吊销 + 同设备续期）
   async refreshToken(req, res) {
     try {
-      const { token } = req.body;
+      // 🔄 2026-10-13 修复（api.md F-A）：双路径兼容。
+      //    加密客户端（APP/webview-APP）解密后业务体在 req.body.data.token，
+      //    明文客户端（web 修复后走 skipEncryptionUrls）在 req.body.token。
+      //    原实现只读 req.body.token ⇒ 加密端恒 400「Token 不能为空」。
+      const { token } = req.body.data || req.body;
 
       if (!token) {
         return res.status(400).json({ message: "Token 不能为空" });
@@ -338,13 +418,79 @@ class AuthController {
         { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
       );
 
+      // 🔒 P0-5：续期成功同样刷新 Cookie（否则 Cookie 会按旧 maxAge 提前过期）
+      try {
+        setAuthCookie(res, newToken, resolveTokenTtlSec());
+      } catch (cookieErr) {
+        console.warn(
+          "[刷新Token] 刷新认证 Cookie 失败（客户端将退回 Bearer 通道）:",
+          cookieErr && cookieErr.message
+        );
+      }
+
       res.json({
         message: "Token 刷新成功",
         token: newToken,
       });
     } catch (error) {
       console.error("刷新 Token 错误:", error);
-      res.status(401).json({ message: "Token 无效或已过期", error: error.message });
+      res.status(401).json({ ...buildErrorBody("Token 无效或已过期", error) });
+    }
+  }
+
+  /**
+   * 【已启用】登出（安全整改 P1-17，2026-10-08）
+   *
+   * ## 作用
+   * 1. **清除认证 Cookie** —— 这是主要效果：浏览器不再携带 ⇒ 令牌立即不可用。
+   * 2. 记一条登出日志，便于审计「谁在什么时候登出」。
+   *
+   * ## 关于「服务端吊销」（P1-8 剩余部分）
+   * 本阶段**不引入 jti 吊销表**：那需要新建表 + 数据迁移，与「不过度设计」冲突，
+   * 且在 httpOnly Cookie 方案下，清Cookie 已能让令牌**立即失效**（浏览器不再发送）。
+   * 残留风险：令牌若在登出前已被窃取，攻击者仍可用到过期 —— 登记为 R-10。
+   *
+   * ⚠ 接口**不需要** authGuard：即便令牌已失效也要能登出（幂等）。
+   */
+  async logout(req, res) {
+    try {
+      // 尽力解析用户（可能因令牌过期/缺失而拿不到，属正常）
+      let userId = req.userId;
+      if (!userId) {
+        const raw =
+          (req.headers.authorization || "").startsWith("Bearer ") &&
+          req.headers.authorization.slice(7).trim();
+        const cookieToken =
+          (req.cookies && req.cookies[require("../../../common/utils/authCookie").TOKEN_COOKIE_NAME]) || raw;
+        if (cookieToken) {
+          try {
+            userId = jwt.verify(cookieToken, process.env.JWT_SECRET).userId;
+          } catch {
+            /* 令牌本就无效，忽略 */
+          }
+        }
+      }
+
+      clearAuthCookie(res);
+
+      if (userId) {
+        await UserLog.append({
+          ...buildServerSideLogFields(req, userId),
+          type: "logout",
+          status: 1,
+        });
+      }
+
+      return res.json({ status: 200, message: "已退出登录" });
+    } catch (error) {
+      // 登出失败也要清 Cookie，别把用户卡在登录态
+      try {
+        clearAuthCookie(res);
+      } catch {
+        /* ignore */
+      }
+      console.error("登出处理异常:", error);
+      return res.json({ status: 200, message: "已退出登录" });
     }
   }
 
@@ -379,30 +525,6 @@ class AuthController {
     } else return res.say(updatedUser.message, 400);
   }
 
-  // 获取用户设置
-  async getSettings(req, res) {
-    try {
-      const user = await User.findById(req.userId);
-      res.json({ settings: user.settings || {} });
-    } catch (error) {
-      console.error("获取设置错误:", error);
-      res.status(500).json({ message: "获取设置失败", error: error.message });
-    }
-  }
-
-  // 更新用户设置
-  async updateSettings(req, res) {
-    try {
-      const { settings } = req.body;
-      await User.update(req.userId, { settings });
-
-      res.json({ message: "设置更新成功", settings });
-    } catch (error) {
-      console.error("更新设置错误:", error);
-      res.status(500).json({ message: "更新设置失败", error: error.message });
-    }
-  }
-
   // 【已启用】
   // 检查是否已有管理员
   async checkAdmin(req, res) {
@@ -420,8 +542,7 @@ class AuthController {
     } catch (error) {
       console.error("检查管理员状态错误:", error);
       res.status(500).json({
-        message: "检查管理员状态失败",
-        error: error.message,
+        ...buildErrorBody("检查管理员状态失败", error),
       });
     }
   }
@@ -430,7 +551,7 @@ class AuthController {
   // 管理员首次注册
   async adminRegister(req, res) {
     try {
-      const { username, email, password } = req.body.data;
+      const { username, email, password } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       // 检查是否已有用户
       const count = await User.count();
       if (count > 0) {
@@ -476,8 +597,7 @@ class AuthController {
     } catch (error) {
       console.log(error);
       res.status(500).send({
-        message: "管理员注册失败",
-        error: error.message,
+        ...buildErrorBody("管理员注册失败", error),
         status: 500,
       });
     }
@@ -494,6 +614,13 @@ class AuthController {
       // 有效期2小时
       const aesExpires = Date.now() + 2 * 60 * 60 * 1000;
       const now = Date.now();
+
+      // 🔒 安全整改 P1-9（2026-10-08）：aes_key **加密后落库**（AES-256-GCM）。
+      //    原来明文存 device_crypto ⇒ 数据库 dump 可离线解密对应设备的全部请求体。
+      //    返回给客户端的仍是明文 tempKey（传输层保护 = R-1 已接受的风险）。
+      //    ⚠ 只加密「握手行」；邮件验证码行（fingerprint=email_verify_*）的
+      //      aes_key 存的是 userId 且被 WHERE 精确匹配，保持明文 —— 见 fieldCrypto.js 头注释。
+      const storedKey = fieldCrypto.encryptField(tempKey);
 
       const sql = `
         INSERT INTO device_crypto (
@@ -513,7 +640,7 @@ class AuthController {
       await db.execute(sql, [
         fp,
         scene,
-        tempKey,
+        storedKey,
         aesExpires,
         req.ip,
         req.headers["user-agent"],
@@ -538,7 +665,10 @@ class AuthController {
   async sendEmailCode(req, res) {
     try {
       const { email: newEmail, type = "email" } = req.body.data || {};
-      const userId = req.body.userId || req.userId; // 从请求中获取用户ID
+      // 🔒 2026-10-12 修复（api.md P1-1）：userId 一律取服务端鉴权身份。
+      //    原实现 `req.body.userId || req.userId` 允许客户端在 body 塞 userId
+      //    覆盖身份（可向任意用户写验证码记录，配合 changeEmail 越权改绑）。
+      const userId = req.userId;
 
       if (!userId) return res.say("用户ID不能为空", 400);
 
@@ -598,8 +728,8 @@ class AuthController {
           recordDate.getFullYear() === todayDate.getFullYear() &&
           recordDate.getMonth() === todayDate.getMonth() &&
           recordDate.getDate() === todayDate.getDate();
-        // 超过 N 次不让发了
-        if (isToday && Number(record.captcha_attempts) > 5) {
+        // 超过 N 次不让发了（与 emailCodeRateLimit 中间件的 >=5 口径统一）
+        if (isToday && Number(record.captcha_attempts) >= 5) {
           console.log("发送次数上限！");
           return res.say("今日获取验证码次数上限，次日再试！", 400);
         }
@@ -608,11 +738,14 @@ class AuthController {
         // 如果不是今天，同步创建时间为今日；如果是今天，保持原创建时间
         const created_at = isToday ? record.created_at : now;
         // 更新现有记录
+        // 🔒 2026-10-12 修复（api.md P1-2）：UPDATE 补 `AND scene = ?`。
+        //    原实现只按 (fingerprint, aes_key) 更新 ⇒ 同一用户改过多个邮箱时
+        //    一次发送把该用户全部历史验证码记录覆盖（新旧邮箱验证码串扰）。
         insertOrUpdateSql = `
           UPDATE device_crypto
           SET captcha_code = ?, captcha_expires_at = ?, captcha_verified = 0,
               captcha_attempts = ?, updated_at = ?, created_at = ?
-          WHERE fingerprint = ? AND aes_key = ?
+          WHERE fingerprint = ? AND scene = ? AND aes_key = ?
         `;
         params = [
           code,
@@ -621,6 +754,7 @@ class AuthController {
           now,
           created_at,
           fingerprint,
+          scene,
           aes_key,
         ];
         console.log(
@@ -654,7 +788,13 @@ class AuthController {
       // 发送邮件
       try {
         await sendVerificationEmail(email, code);
-        console.log(`[发送验证码] 用户ID: ${userId}, 邮箱: ${email}, 类型: ${type}, 验证码: ${code}, 过期时间: ${new Date(expiresAt)}`);
+        // 🔒 安全整改 P1-10：**不打印验证码明文**。
+        //    日志（含容器 stdout、logrotate 归档、CI 输出）常被运维与第三方接触，
+        //    一旦明文出现，邮箱验证码即可被直接用来改绑/改密。
+        //    需要排查发送失败时用 userId + type + 过期时间定位即可。
+        console.log(
+          `[发送验证码] 用户ID: ${userId}, 邮箱: ${maskEmail(email)}, 类型: ${type}, 过期时间: ${new Date(expiresAt)}`
+        );
       } catch (emailError) {
         console.error(`[发送验证码] 邮件发送失败: ${emailError.message}, 但验证码已保存到数据库`);
       }
@@ -675,24 +815,32 @@ class AuthController {
   // 修改邮箱（需要验证码）
   async changeEmail(req, res) {
     try {
-      const { email, code } = req.body.data;
-      const userId = req.userId; // UVu_3pIgiaqTkHAzX4bPU
+      const { email, code } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
+      // 🔒 2026-10-12 修复（api.md P1-1）：userId 取服务端鉴权身份。
+      const userId = req.userId; // 对应你数据库里的 aes_key 字段
 
       // 1. 严格纠正拼写和对应关系
       const fingerprint = `email_verify_email`;
       const scene = email;
       const id = userId; // 对应你数据库里的 aes_key 字段
 
+      // 🔒 安全整改 P1-10：scene 是邮箱，属PII，日志里做脱敏
       console.log(
-        `[准备查询] fingerprint: ${fingerprint}, scene: ${scene}, aes_key: ${id}`
+        `[准备查询] fingerprint: ${fingerprint}, scene: ${maskEmail(
+          scene
+        )}, aes_key: ${id}`
       );
 
+      // 🔒 2026-10-12 修复（api.md P1-2）：SELECT 补 `AND scene = ?`。
+      //    原实现只按 (fingerprint, aes_key) 查 ⇒ 用户有多个邮箱的验证码记录时
+      //    rows[0] 无序取到旧邮箱记录，新邮箱的验证码永远「验证码错误」
+      //    （2026-10-12 修前基线实测复现：S5 changeEmail 报「验证码错误」）。
       const sql = `
         SELECT * FROM device_crypto 
-        WHERE fingerprint = ? AND aes_key = ?`;
+        WHERE fingerprint = ? AND scene = ? AND aes_key = ?`;
 
       // 这里的参数顺序必须和 SQL 里的 ? 一一对应
-      const [rows] = await db.execute(sql, [fingerprint, id]);
+      const [rows] = await db.execute(sql, [fingerprint, scene, id]);
       console.log(`[数据库查询结果] 找到 ${rows ? rows.length : 0} 条记录`);
       if (!rows || rows.length === 0) {
         console.log(`[验证码校验失败] 验证码不存在`);
@@ -701,18 +849,16 @@ class AuthController {
       const record = rows[0];
       const now = Date.now();
       const expiresAt = record.captcha_expires_at;
+      // 🔒 安全整改 P1-10：不打印验证码明文（存储值/输入值都不打）
       console.log(
-        `[验证码信息] 存储的验证码: ${record.captcha_code
-        }, 过期时间: ${new Date(expiresAt)}, 当前时间: ${new Date(
+        `[验证码信息] 过期时间: ${new Date(expiresAt)}, 当前时间: ${new Date(
           now
         )}, 剩余时间: ${Math.floor((expiresAt - now) / 1000)}秒`
       );
 
       // 验证验证码
       if (record.captcha_code !== code) {
-        console.log(
-          `[验证码校验失败] 验证码错误: 输入=${code}, 存储=${record.captcha_code}`
-        );
+        console.log(`[验证码校验失败] 验证码不匹配（输入与存储值均不打印）`);
         // 增加失败次数（不增加 captcha_attempts，因为那是发送次数）
         await db.execute(
           `UPDATE device_crypto
@@ -756,7 +902,8 @@ class AuthController {
       );
 
       console.log(
-        `[修改邮箱成功] 用户 ${userId} 邮箱已修改为 ${email}, 验证码使用次数: ${newAttempts}`
+        // 🔒 P1-10（复审补漏）：邮箱是 PII，日志打码
+        `[修改邮箱成功] 用户 ${userId} 邮箱已修改为 ${maskEmail(email)}, 验证码使用次数: ${newAttempts}`
       );
 
       res.status(200).send({
@@ -780,7 +927,7 @@ class AuthController {
   // 修改密码（校验：旧密码 + 新密码 + 验证码）
   async changePasswordWithCode(req, res) {
     try {
-      const { oldPassword, newPassword, code } = req.body.data;
+      const { oldPassword, newPassword, code } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       const userId = req.userId;
       const id = userId;
 
@@ -873,7 +1020,9 @@ class AuthController {
         [now, fingerprint, scene, id]
       );
 
-      console.log(`[成功] 用户 ${userId} 密码已硬写入数据库`);
+      // 注：原文是「密码已硬写入数据库」，容易让人误以为日志里应出现密码 ——
+      // 实际这行只是操作完成提示（不含任何密码/验证码内容），保留但去掉误导性措辞。
+      console.log(`[成功] 用户 ${userId} 密码重置流程已执行完毕`);
 
       return res.status(200).send({
         status: 200,

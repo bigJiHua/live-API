@@ -1,4 +1,9 @@
 const dayjs = require('dayjs');
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
@@ -17,7 +22,7 @@ class TodoController {
   async create(req, res) {
     try {
       const userId = req.userId;
-      const { content, event_type, happen_date, priority, need_remind, remind_days, remind_time, is_recurring, remark } = req.body.data;
+      const { content, event_type, happen_date, priority, need_remind, remind_days, remind_time, is_recurring, remark } = req.body.data || req.body;
 
       if (!content || content.trim() === '') {
         return res.status(400).json({ status: 400, message: '事件内容不能为空' });
@@ -43,7 +48,7 @@ class TodoController {
       return res.json({ status: 200, message: '创建成功', data: result });
     } catch (error) {
       console.error('创建待办错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '创建失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('创建失败', error) });
     }
   }
 
@@ -75,7 +80,7 @@ class TodoController {
       return res.json({ status: 200, message: '查询成功', data: result });
     } catch (error) {
       console.error('获取待办列表错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -136,7 +141,7 @@ class TodoController {
       return res.json({ status: 200, message: '查询成功', data: calendar });
     } catch (error) {
       console.error('获取日历数据错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -156,7 +161,7 @@ class TodoController {
       return res.json({ status: 200, message: '查询成功', data: result });
     } catch (error) {
       console.error('获取详情错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -167,7 +172,7 @@ class TodoController {
     try {
       const userId = req.userId;
       const { id } = req.params;
-      const { content, event_type, happen_date, status, priority, need_remind, remind_days, remind_time, is_recurring, remark } = req.body.data;
+      const { content, event_type, happen_date, status, priority, need_remind, remind_days, remind_time, is_recurring, remark } = req.body.data || req.body;
 
       // 检查是否存在
       const existing = await Todo.findById(id, userId);
@@ -196,7 +201,7 @@ class TodoController {
       return res.json({ status: 200, message: '更新成功', data: result });
     } catch (error) {
       console.error('更新待办错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '更新失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('更新失败', error) });
     }
   }
 
@@ -216,7 +221,7 @@ class TodoController {
       return res.json({ status: 200, message: '删除成功' });
     } catch (error) {
       console.error('删除待办错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '删除失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('删除失败', error) });
     }
   }
 
@@ -263,7 +268,7 @@ class TodoController {
       return res.json({ status: 200, message: '查询成功', data: rows });
     } catch (error) {
       console.error('获取提醒列表错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 }

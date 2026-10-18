@@ -47,4 +47,7 @@ router.post(
   securityController.resetPin
 );
 
+// 设备风险信号上报（P2-14：纯信号落库，不拒服务）
+router.post("/risk-report", authGuard, securityController.riskReport);
+
 module.exports = router;

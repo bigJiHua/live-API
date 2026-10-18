@@ -79,8 +79,13 @@
 | `014_card_foreign_register_unique.sql` | card_foreign_register 新增唯一键 `uk_account_id`（防重复登记） |
 | `015_card_repay_account_id_nullable.sql` | card_repay.account_id 允许 NULL（本卡还款） |
 | `016_credit_pool_credit_report_merged.sql` | card_credit_pool 新增 `credit_report_merged` 信报合一标记（开启后支持合并还款） |
+| `017_consolidated_20261018.sql` | 合并原 017/018/20261013：device_crypto.aes_key varchar(64)→varchar(191) + work_salary/bus_fund_history 唯一键（含自动清重）+ sys_attachment.file_hash |
 
 > 以上迁移变更均已合入 `live.sql`，新环境直接导入 `live.sql` 即可。迁移脚本对已升级环境为幂等（重复执行自动跳过）。
+>
+> **2026-10-18**：原 `018_work_fund_unique_keys.sql`、`20261013_add_sys_attachment_file_hash.sql` 已合并进 `017_consolidated_20261018.sql`。
+> 原因是后两个文件名不符合 `001~017` 的连续编号，而迁移器只按文件名 `.sort()` 执行 —— 以后再新增 `019_` 会排到它们之前。
+> 合并后的 017 是新文件名，已执行过旧 017 的库会重跑一次；三条语句均幂等（MODIFY / 清重 DELETE / 已存在则跳过），无副作用。
 
 ---
 

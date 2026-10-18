@@ -15,12 +15,10 @@
 | `/api/v1/account` | account | 账务模块 | 收支流水管理 |
 | `/api/v1/accountBalance` | account | 账务模块 | 账户余额管理 |
 | `/api/v1/category` | category | 分类模块 | 收支分类管理 |
-| `/api/v1/bank` | category | 分类模块 | 银行分类管理 |
 | `/api/v1/card` | card | 银行卡模块 | 卡片管理 |
 | `/api/v1/card/bill` | card | 银行卡模块 | 信用卡账单管理 |
 | `/api/v1/card/repay` | card | 银行卡模块 | 信用卡还款管理 |
 | `/api/v1/user` | user | 用户模块 | 用户管理 |
-| `/api/v1/database` | database | 数据库模块 | 管理员只读查询 |
 | `/api/v1/upload` | upload | 上传模块 | 文件上传 |
 | `/api/v1/moment` | moment | 时刻模块 | 动态/日记 |
 | `/api/v1/asset` | asset | 资产模块 | 资产快照与登记 |
@@ -28,15 +26,14 @@
 | `/api/v1/work` | work | 工作模块 | 工作与工资 |
 | `/api/v1/fixedAsset` | fixed_asset | 固定资产模块 | 固定资产管理 |
 | `/api/v1/budget` | budget | 预算模块 | 预算管理 |
-| `/api/v1/dashboard` | dashboard | 仪表盘模块 | 首页数据聚合（桌面端） |
-| `/api/v1/resource` | resource | 资源模块 | 文件资源管理（桌面端） |
-| `/api/v1/bank-category` | bankCategory | 银行分类模块 | 银行分类管理（桌面端） |
-| `/api/v1/flow` | flow | 流水模块 | 流水日历/详情（桌面端） |
+| `/api/v1/flow` | flow | 流水模块 | 流水日历（桌面端） |
 | `/api/v1/data-manager` | dataManager | 数据管理模块 | 备份/导出/导入 |
 | `/api/v1/fund` | fund | 理财模块 | 基金投资管理 |
 | `/api/v1/recurring` | recurring | 周期支出模块 | 固定周期支出提醒 |
 | `/api/v1/geo` | geo | 地理位置模块 | IP 定位、逆地理编码代理 |
 | `/api/v1/share` | share | 公开分享模块 | 动态公开分享（免登录访问） |
+
+> 🔒 2026-10-13（api.md §11 冗余接口清理）：已整组删除 `/api/v1/bank`（银行分类走 `/category?type=bank`）、`/api/v1/database`（管理页调错前缀不可达）、`/api/v1/dashboard`（从未挂载）、`/api/v1/resource`（走 `/upload`）、`/api/v1/bank-category`（与 `/category` 重叠）；零散删除 `/account/stats/all`、`/flow/:id`、`/card/bill/rebuild-all`。API_Go 同步删除保持一致。
 
 ## 认证机制
 

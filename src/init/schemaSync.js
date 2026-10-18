@@ -285,6 +285,17 @@ async function syncSchema(conn) {
   const target = parseLiveSql();
   console.log(`   目标表: ${Object.keys(target).length} 张`);
 
+  // 🔒 2026-10-13 修复（api.md P3-1）：空 target 熔断。
+  //    parseLiveSql 的正则只认 `CREATE TABLE IF NOT EXISTS` 写法；若 live.sql
+  //    改写/编码变化导致解析为 0 张表，下方"删表（DB 有，SQL 无）"逻辑会把
+  //    全库非 _ 前缀表全部 DROP（数据灾难）。此处 target 为空即抛错中止。
+  if (Object.keys(target).length === 0) {
+    throw new Error(
+      `[schemaSync 中止] ${SOURCE_SQL} 未解析出任何目标表（正则仅匹配 CREATE TABLE IF NOT EXISTS）。` +
+      `若带着空的 target 继续同步会把数据库中全部业务表 DROP 掉，已中止。请检查 live.sql 文件内容。`
+    );
+  }
+
   const actual = await getDbSchema(conn);
   console.log(`   实际表: ${Object.keys(actual).length} 张`);
 

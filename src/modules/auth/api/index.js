@@ -35,6 +35,9 @@ router.post("/admin-register", authController.adminRegister);
 // 刷新 Token
 router.post("/refresh", authController.refreshToken);
 
+// 登出（P1-17）。**刻意不挂 authGuard**：令牌已失效时也要能登出（幂等）
+router.post("/logout", authController.logout);
+
 /**
  * 权限接口部分
  */

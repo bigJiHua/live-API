@@ -21,6 +21,8 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const mysql = require('mysql2/promise');
 const dayjs = require('dayjs');
+// 🔒 P1-10：邮箱打码（复审补漏）
+const { maskEmail } = require('../common/utils/logFields');
 
 // 期望的表列表（兜底值）：正常情况下以 live.sql 为唯一真相源动态读取，
 // 仅当解析 live.sql 失败时回退到此处硬编码清单，避免与真实结构脱节。
@@ -390,8 +392,9 @@ async function createAdmin() {
   const email = process.env.INIT_ADMIN_EMAIL || 'admin@example.com';
   
   logInit(`目标账户: ${username}`);
+  // 🔒 P1-10（复审补漏）：邮箱是 PII，日志打码；密码只显示强度不显示内容
   logInit(`密码强度: ${password.length >= 8 ? '安全' : '建议使用更长的密码'} (${password.length} 位)`);
-  logInit(`邮箱: ${email}`);
+  logInit(`邮箱: ${maskEmail(email)}`);
   printDivider();
   
   // 检查是否已存在管理员（按 identity='admin' 查，而非按 username，避免重复创建）
@@ -644,6 +647,16 @@ async function init() {
       try {
         const { runMigrations } = require('./migrationRunner');
         await runMigrations(conn2);
+      } catch (migErr) {
+        // 🔒 2026-10-13（api.md P2-15）：迁移失败 = schema 与代码不一致，必须致命。
+        //    原实现无 catch ⇒ 错误被外层大 catch 吞成 { success:false }，
+        //    app.js 又忽略返回值 ⇒ 服务带病启动（缺列/缺表），
+        //    依赖新 schema 的功能随后全量 500 而进程守护毫无察觉。
+        //    现在打 fatal 标记，由 app.js fail-fast 拒绝启动（INIT_STRICT=false 可强制）。
+        logInit(`❌ 增量迁移失败: ${migErr.message}`, 'error');
+        logInit('数据库结构与代码不一致，服务将不启动（设 INIT_STRICT=false 可强制）', 'warn');
+        printSummary(false);
+        return { success: false, step: 'migration', fatal: true, reason: migErr.message };
       } finally {
         await conn2.end();
       }
@@ -684,8 +697,10 @@ async function init() {
       stats.checks.fields = false;
       allPassed = false;
       // 同步失败不继续清理 .env，保留 INIT_ENABLE 以便下次重试
+      // 🔒 2026-10-13（api.md P2-15）：与日常路径迁移失败同理——schema 未就绪
+      //    同样致命（live.sql 基准没落地，后续功能全 500），打 fatal 让 app.js 拒绝启动。
       printSummary(false);
-      return { success: false, step: 2, reason: err.message };
+      return { success: false, step: 2, fatal: true, reason: err.message };
     } finally {
       await conn2.end();
     }

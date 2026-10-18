@@ -59,7 +59,9 @@ class CreditCore {
    */
   static async syncCardBills(cardId, userId, conn) {
     const executor = conn || db;
-    const card = await getCard().findById(cardId, userId);
+    // 🔄 2026-10-13（api.md P2-6）：findById 透传 executor——事务内重算时读同一连接，
+    //    否则读到事务前旧卡快照（如改 bill_day 后重算，账单仍写旧账单日）。
+    const card = await getCard().findById(cardId, userId, executor);
     if (!card || card.card_type !== 'credit') return null;
 
     // 共享池卡：整池原子重算（H1 审计）。池内任何一张卡发生交易/还款/改额，
@@ -82,7 +84,7 @@ class CreditCore {
 
   /** 单卡重算（不扩散到池），供 syncCardBills 池内循环复用 */
   static async #syncOne(cardId, userId, executor) {
-    const card = await getCard().findById(cardId, userId);
+    const card = await getCard().findById(cardId, userId, executor);
     if (!card || card.card_type !== 'credit') return null;
 
     const months = await this.#computeMonths(card, userId, executor);
@@ -112,20 +114,33 @@ class CreditCore {
         snapshots.push({ billMonth: m.billMonth, billId: existing.id, ...m.core });
       } else {
         const id = idUtils.billId();
-        await executor.execute(
-          `INSERT INTO card_bill
-             (id, user_id, card_id, bill_month, bill_day, repay_day, credit_limit, temp_limit,
-              used_limit, avail_limit, bill_amount, repaid, need_repay, repay_status,
-              is_overdue, overdue_days, points, points_rate, min_repay, bill_start_date, bill_end_date,
-              remind_switch, remind_days, create_time, update_time, is_deleted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 3, ?, ?, 0)`,
-          [
-            id, userId, cardId, m.billMonth, card.bill_day, card.repay_day,
-            m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
-            m.repaid, m.needRepay, m.repayStatus, m.isOverdue ? 1 : 0, m.overdueDays,
-            m.points, pointsRateWrite, m.minRepay, m.billStartDate, m.billEndDate, now, now
-          ]
-        );
+        try {
+          await executor.execute(
+            `INSERT INTO card_bill
+               (id, user_id, card_id, bill_month, bill_day, repay_day, credit_limit, temp_limit,
+                used_limit, avail_limit, bill_amount, repaid, need_repay, repay_status,
+                is_overdue, overdue_days, points, points_rate, min_repay, bill_start_date, bill_end_date,
+                remind_switch, remind_days, create_time, update_time, is_deleted)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 3, ?, ?, 0)`,
+            [
+              id, userId, cardId, m.billMonth, card.bill_day, card.repay_day,
+              m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
+              m.repaid, m.needRepay, m.repayStatus, m.isOverdue ? 1 : 0, m.overdueDays,
+              m.points, pointsRateWrite, m.minRepay, m.billStartDate, m.billEndDate, now, now
+            ]
+          );
+        } catch (e) {
+          // 🔄 2026-10-13（api.md P3-9）：并发重建同卡同月账单时唯一键冲突（ER_DUP_ENTRY）
+          //    不再 500 —— 说明已存在（另一并发刚建），按已存在处理。
+          if (e.code === "ER_DUP_ENTRY") {
+            const existingRetry = await CardBill.findByCardAndMonth(cardId, m.billMonth, executor);
+            if (existingRetry) {
+              snapshots.push({ billMonth: m.billMonth, billId: existingRetry.id, ...m.core });
+              continue;
+            }
+          }
+          throw e;
+        }
         snapshots.push({ billMonth: m.billMonth, billId: id, ...m.core });
       }
     }
@@ -148,13 +163,17 @@ class CreditCore {
   }
 
   /**
-   * 汇总用户全部信用卡的额度/负债（供信用卡中心、总负债统计、getAllStats 使用）。
+   * 汇总用户全部信用卡的额度/负债（供信用卡中心、总负债统计使用；
+   * 原 getAllStats 入口已随 api.md §11 冗余清理删除，本方法保留供 aggregate 链路使用）。
    * 只读计算，不写库。
    * @returns {Promise<{totalCreditLimit,totalTempLimit,totalDebt,totalAvail,totalOverflow,cards}>}
    */
   static async aggregate(userId, conn) {
     const executor = conn || db;
-    const cards = await getCard().findAll(userId, { cardType: 'credit' });
+    // 🔄 2026-10-13（api.md P2-6）：findAll / CreditPool.findById 透传 executor——
+    //    settlement.js:157 在事务内调 aggregate(user_id, executor)，
+    //    查询须走同一连接才能读到事务内未提交的卡/池变更。
+    const cards = await getCard().findAll(userId, { cardType: 'credit' }, executor);
 
     // 分组：归入同一共享池的卡合并为一组；无池的卡各自一组（避免共享额度重复累加）
     const groups = new Map();
@@ -174,7 +193,7 @@ class CreditCore {
     for (const [key, g] of groups) {
       if (g.poolId) {
         // —— 共享池：以池额度为准，负债 = 池内全部卡 netOwed 之和 ——
-        const pool = await CreditPool.findById(g.poolId, userId);
+        const pool = await CreditPool.findById(g.poolId, userId, executor);
         // 池被删除/找不到时，回退到组内卡片自身额度之和（P6 审计：不可按0导致负可用额度）
         const fallbackCredit = g.cards.reduce((s, c) => s + (parseFloat(c.credit_limit) || 0), 0);
         const fallbackTemp = g.cards.reduce((s, c) => s + (parseFloat(c.temp_limit) || 0), 0);

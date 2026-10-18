@@ -22,8 +22,7 @@ router.get("/card/:cardId/latest", cardBillController.getLatestByCardId);
 // 重建账单（从流水重新计算）
 router.post("/card/:cardId/rebuild", cardBillController.rebuild);
 
-// 批量重建所有信用卡账单
-router.post("/rebuild-all", cardBillController.rebuildAll);
+// 🔒 2026-10-13（api.md §11）：POST /rebuild-all 已删——三端无调用方（仅单卡 rebuild 在用）。
 
 // ========== 外币消费登记/对账（痛点4） ==========
 // 待对账外币列表（专用登记页）

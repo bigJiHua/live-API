@@ -1,5 +1,10 @@
 const FixedAsset = require('../model/fixed_asset');
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 /**
  * 固定资产控制器
  */
@@ -33,7 +38,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '查询成功', data: result });
     } catch (error) {
       console.error('获取固定资产错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -47,7 +52,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '查询成功', data: assets });
     } catch (error) {
       console.error('获取回收站错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -67,7 +72,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '查询成功', data: asset });
     } catch (error) {
       console.error('获取资产详情错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '查询失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('查询失败', error) });
     }
   }
 
@@ -77,7 +82,7 @@ class FixedAssetController {
   async create(req, res) {
     try {
       const userId = req.userId;
-      const { info, tag, img_url, buy_price, secondhand_price, use_years, residual_rate, buy_date, status } = req.body.data;
+      const { info, tag, img_url, buy_price, secondhand_price, use_years, residual_rate, buy_date, status } = req.body.data || req.body;
 
       // 校验
       if (!info) {
@@ -111,7 +116,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '创建成功', data: asset });
     } catch (error) {
       console.error('创建固定资产错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '创建失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('创建失败', error) });
     }
   }
 
@@ -123,12 +128,12 @@ class FixedAssetController {
       const userId = req.userId;
       const { id } = req.params;
 
-      const asset = await FixedAsset.update(id, userId, req.body.data);
+      const asset = await FixedAsset.update(id, userId, req.body.data || req.body);
 
       return res.json({ status: 200, message: '更新成功', data: asset });
     } catch (error) {
       console.error('更新固定资产错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '更新失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('更新失败', error) });
     }
   }
 
@@ -139,7 +144,7 @@ class FixedAssetController {
     try {
       const userId = req.userId;
       const { id } = req.params;
-      const { status } = req.body.data;
+      const { status } = req.body.data || req.body;
 
       if (!status) {
         return res.status(400).json({ status: 400, message: '状态不能为空' });
@@ -155,7 +160,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '状态更新成功', data: asset });
     } catch (error) {
       console.error('变更状态错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '变更失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('变更失败', error) });
     }
   }
 
@@ -174,7 +179,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '删除成功' });
     } catch (error) {
       console.error('删除固定资产错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '删除失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('删除失败', error) });
     }
   }
 
@@ -193,7 +198,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '恢复成功' });
     } catch (error) {
       console.error('恢复资产错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '恢复失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('恢复失败', error) });
     }
   }
 
@@ -212,7 +217,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '永久删除成功' });
     } catch (error) {
       console.error('永久删除错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '删除失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('删除失败', error) });
     }
   }
 
@@ -226,7 +231,7 @@ class FixedAssetController {
       return res.json({ status: 200, message: '折旧巡检完成', data: assets });
     } catch (error) {
       console.error('折旧巡检错误:', error);
-      return res.status(500).json({ status: 500, message: error.message || '折旧巡检失败' });
+      return res.status(500).json({ status: 500, ...buildErrorBody('折旧巡检失败', error) });
     }
   }
 }

@@ -1,7 +1,10 @@
 const crypto = require("crypto");
+const { resolveSecret } = require("./secretGuard");
 
-// 与 JWT_SECRET 共用或单独配置
-const SECRET = process.env.SHARE_TOKEN_SECRET || process.env.JWT_SECRET || "live-share-fallback";
+// 与 JWT_SECRET 共用或单独配置。
+// ⚠ 不再回退到硬编码的 "live-share-fallback"：生产环境缺失/弱值会直接抛错拒绝启动，
+// 避免漏配 .env 时静默退化成「攻击者已知的常量」，从而可离线伪造任意分享 token。
+const SECRET = resolveSecret("SHARE_TOKEN_SECRET", { fallbackTo: "JWT_SECRET" });
 
 /**
  * 生成分享 token

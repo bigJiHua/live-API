@@ -53,7 +53,7 @@ class CardController {
     try {
       const card = await Card.create({
         userId: req.userId,
-        ...req.body.data,
+        ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
       });
 
       if (!card || !card.id) {
@@ -82,7 +82,7 @@ class CardController {
    */
   async update(req, res) {
     try {
-      const card = await Card.update(req.params.id, req.userId, req.body.data);
+      const card = await Card.update(req.params.id, req.userId, req.body.data || req.body); // 🔄 2026-10-13（api.md P2-12 同模式）
 
       if (!card) return res.say("卡片不存在", 404);
 

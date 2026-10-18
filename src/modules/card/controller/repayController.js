@@ -58,8 +58,8 @@ class CardRepayController {
         repayMethod,
         repayMethodCardId,
         repayTime,
-        remark 
-      } = req.body.data;
+        remark
+      } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       // 使用 executeRepay 方法（失败会抛出错误）
       const result = await CardRepay.executeRepay({
@@ -143,7 +143,7 @@ class CardRepayController {
    */
   async update(req, res) {
     try {
-      const record = await CardRepay.update(req.params.id, req.userId, req.body.data);
+      const record = await CardRepay.update(req.params.id, req.userId, req.body.data || req.body); // 🔄 2026-10-13（api.md P2-12 同模式）
 
       if (!record) return res.say("还款记录不存在", 404);
 

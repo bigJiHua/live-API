@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS `bus_fund_history` (
   `record_date` varchar(20) NOT NULL COMMENT '记录日期(YYYY-MM-DD)',
   `create_time` varchar(20) NOT NULL COMMENT '写入时间',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_fund_record_date` (`fund_id`,`record_date`),
   KEY `idx_fund_date` (`fund_id`,`record_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='理财净值历史表';
 
@@ -432,7 +433,7 @@ CREATE TABLE IF NOT EXISTS `card_foreign_register` (
 DROP TABLE IF EXISTS `device_crypto`;
 CREATE TABLE IF NOT EXISTS `device_crypto` (
   `fingerprint` varchar(64) COLLATE utf8mb4_bin NOT NULL COMMENT '浏览器指纹',
-  `aes_key` varchar(64) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '临时AES密钥',
+  `aes_key` varchar(191) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '临时AES密钥（P1-9起为enc.v1:密文，邮件行为userId明文）',
   `aes_expires_at` bigint(20) DEFAULT NULL COMMENT 'AES过期时间',
   `captcha_code` varchar(10) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '验证码',
   `captcha_expires_at` bigint(20) DEFAULT NULL COMMENT '验证码过期时间',
@@ -570,11 +571,13 @@ CREATE TABLE IF NOT EXISTS `sys_attachment` (
   `file_path` varchar(255) NOT NULL COMMENT '存储路径',
   `file_size` varchar(50) DEFAULT NULL COMMENT '大小(byte)',
   `file_ext` varchar(10) DEFAULT NULL COMMENT '后缀名',
+  `file_hash` varchar(64) DEFAULT NULL COMMENT '文件内容SHA-256(去重秒传,2026-10-13)',
   `create_time` varchar(20) NOT NULL,
   `is_deleted` tinyint(4) DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `bus_id` (`bus_id`),
-  KEY `idx_bus_ref` (`bus_type`,`bus_id`)
+  KEY `idx_bus_ref` (`bus_type`,`bus_id`),
+  KEY `idx_file_hash` (`user_id`,`file_hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='文件附件索引表';
 
 -- --------------------------------------------------------
@@ -720,6 +723,7 @@ CREATE TABLE IF NOT EXISTS `work_salary` (
   `is_deleted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '逻辑删除标记',
   `update_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_salary_job_date` (`job_id`,`work_date`),
   KEY `idx_user_date_dt` (`user_id`,`work_date_dt`) COMMENT '加速日期范围筛选',
   KEY `idx_job_id` (`job_id`) COMMENT '用于快速查询某份工作的全部流水'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='每日工资收入明细与流水记录表';

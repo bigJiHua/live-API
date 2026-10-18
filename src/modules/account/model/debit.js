@@ -35,15 +35,19 @@ class DebitAccount {
     const now = String(Date.now());
 
     // 从 card_base 获取真实的 card_type
+    // 🔒 2026-10-13（api.md P2-5）：实体卡必须存在且归属本人。
+    //    原实现 `WHERE id = ? AND is_deleted = 0` 不带 user_id ⇒ 可向他人卡片记收支；
+    //    且查不到时静默跳过（配合 validate 的收入放行分支，假卡ID也能建收入）。
     let finalAccountType = '';
-    if (cardId) {
+    if (cardId && cardId !== 'xxxx' && cardId !== 'yyyy') {
       const [cardRows] = await executor.execute(
-        'SELECT card_type FROM card_base WHERE id = ? AND is_deleted = 0',
-        [cardId]
+        'SELECT card_type FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0',
+        [cardId, userId]
       );
-      if (cardRows[0]?.card_type) {
-        finalAccountType = cardRows[0].card_type;
+      if (!cardRows[0]) {
+        throw new Error('卡片不存在或无权访问');
       }
+      finalAccountType = cardRows[0].card_type;
     }
 
     // 借记卡模块拦截：若传入信用卡消费，拒绝（应走 credit 模块）
@@ -105,8 +109,11 @@ class DebitAccount {
     // ===== 转账关联：收入方向时写入 account_transfer =====
     if (transferGroupId && direction === 1 && payType === '转账') {
       try {
+        // 🔄 2026-10-13（api.md P2-4）：查询/写入统一走 executor（事务连接）。
+        //    原实现用全局 db：事务内读不到未提交的支出方记录；
+        //    且事务回滚后 account_transfer 残留脏数据。
         // 查找同组的支出方记录
-        const [expenseRows] = await db.execute(
+        const [expenseRows] = await executor.execute(
           `SELECT id, card_id FROM ${this.tableName}
            WHERE transfer_group_id = ? AND user_id = ? AND direction = 0 AND is_deleted = 0
            LIMIT 1`,
@@ -114,7 +121,7 @@ class DebitAccount {
         );
         const expenseRecord = expenseRows[0];
         if (expenseRecord) {
-          await db.execute(`
+          await executor.execute(`
             INSERT INTO account_transfer (id, user_id, from_card_id, to_card_id, amount, trans_date, remark, create_time, is_deleted)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON DUPLICATE KEY UPDATE is_deleted = 0, from_card_id = VALUES(from_card_id), to_card_id = VALUES(to_card_id)

@@ -3,7 +3,15 @@ const UserLog = require("../../auth/model/log");
 const User = require("../../auth/model/user");
 const db = require("../../../common/config/db");
 const pinLockGuard = require("../../../common/middleware/pinLockGuard");
+const {
+  clearVerifiedSession,
+  markVerified,
+} = require("../../../common/middleware/pinSecurityGuard");
 const { resolvePassword } = require("../../../common/utils/rsaKeys");
+// ✅ P1-15（复审补漏）：日志字段一律服务端采集
+const {
+  buildServerSideLogFields,
+} = require("../../../common/utils/logFields");
 
 /** 解密 PIN（支持 RSA 密文数组，安全键盘 secureOnly 输入） */
 const resolvePin = (raw) => resolvePassword(raw);
@@ -38,7 +46,7 @@ class SecurityController {
    */
   async verifyPin(req, res) {
     try {
-      const { pin: rawPin } = req.body.data;
+      const { pin: rawPin } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）：authSecurityData 对明文请求直接放行，须双路径
       const pin = resolvePin(rawPin); // 支持 RSA 密文数组解密
 
       // 校验 PIN 格式
@@ -120,6 +128,17 @@ class SecurityController {
           ? latestRecord[0].error_count + 1
           : 1;
 
+        // 🔄 2026-10-13（api.md P3-6）：补写 user_log 失败记录。
+        //    原实现 verifyPin 失败路径只更新 security_verify_log、不写 user_log，
+        //    导致下方 `logErrorCount >= 5` 锁账户的兜底在此路径永不触发（死逻辑）。
+        //    口径与 changePin 的错误路径一致（type:'pin', status:0）。
+        await UserLog.append({
+          ...buildServerSideLogFields(req, req.userId),
+          type: "pin",
+          status: 0,
+          error_message: "PIN验证失败",
+        });
+
         // 检查 user_log 的错误次数
         const logErrorCount = await UserLog.getPinErrorCount(req.userId);
         if (secErrorCount >= 3) {
@@ -162,6 +181,12 @@ class SecurityController {
          WHERE user_id = ? AND action_type = 'lock' AND pin_status = 0`,
         [req.userId]
       );
+
+      // 3. 开启 30 秒放行窗口并重置频率/敏感操作计数。
+      // 前端 PIN 弹窗走的是本接口（不经过 pinSecurityGuard 的分支 1/2），
+      // 若不在此重置，风控窗口内的计数会保持超限，重发的请求会被再次拦成 8303 —— 
+      // 形成「输对 PIN 也过不去」的死循环。
+      markVerified(req.userId);
 
       return res.json({ code: 8301, status: 200, message: "验证成功", verified: true });
     } catch (error) {
@@ -276,6 +301,9 @@ class SecurityController {
                 "风险操作 PIN 错误次数过多，临时锁定",
               ]
             );
+
+            // 与 lock-system 一致：清掉内存放行会话，避免软锁被 30 秒放行窗口绕过
+            clearVerifiedSession(req.userId);
           }
 
           return res.status(200).json({
@@ -363,7 +391,7 @@ class SecurityController {
    */
   async setPin(req, res) {
     try {
-      const { pin: rawPin } = req.body.data;
+      const { pin: rawPin } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       const pin = resolvePin(rawPin); // 支持 RSA 密文数组解密
 
       // 校验 PIN 格式
@@ -393,9 +421,8 @@ class SecurityController {
    * @param {string} newPin - 新 PIN 码 / 000000 = 关闭PIN
    */
   async changePin(req, res) {
-    const clientData = req.body;
     try {
-      const { oldPin: rawOldPin, newPin: rawNewPin } = req.body.data;
+      const { oldPin: rawOldPin, newPin: rawNewPin } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       const oldPin = resolvePin(rawOldPin); // 支持 RSA 密文数组解密
       const newPin = resolvePin(rawNewPin);
 
@@ -482,12 +509,14 @@ class SecurityController {
         }
 
         // 🔴 登录失败统计
+        //    ✅ 复审修复（P1-15 漏改，2026-10-08）：旧写法 `...clientData`（req.body 整体展开）
+        //    让客户端可伪造 login_ip/fingerprint/path 等审计字段 —— 与 auth 模块同批整改时
+        //    漏掉了 security 模块这一处。改走服务端采集。
         await UserLog.append({
-          user_id: user.id,
+          ...buildServerSideLogFields(req, user.id),
           type: "pin",
           status: 0,
           error_message: "尝试修改PIN码PIN码输入错误",
-          ...clientData, // 自动解构 request 传来的 login_ip, login_location 等所有字段
         });
         return res.status(400).json({
           status: 400,
@@ -524,7 +553,7 @@ class SecurityController {
    */
   async resetPin(req, res) {
     try {
-      const { verificationCode, newPin: rawNewPin } = req.body.data;
+      const { verificationCode, newPin: rawNewPin } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       const newPin = resolvePin(rawNewPin); // 支持 RSA 密文数组解密
 
       // 新 PIN 格式校验
@@ -534,12 +563,61 @@ class SecurityController {
           .json({ status: 400, message: "PIN 码必须是6位纯数字" });
       }
 
-      // 验证码校验（后续启用）
-      // const isV = await Captcha.verify(email, verificationCode, 'pin_reset');
-      // if (!isV) return res.status(400).json({ status: 400, message: "验证码错误" });
+      // 🔒 2026-10-13 修复（api.md P1-3）：恢复邮箱验证码校验。
+      //    原实现整段被注释 ⇒ 任何已登录用户无需验证码/原 PIN 即可重设 PIN，
+      //    PIN 二次防护被完整绕过。校验口径与 changePasswordWithCode 一致：
+      //    查 device_crypto 的 email_verify_pwd 记录（scene=用户当前邮箱），
+      //    比对验证码 + 有效期 + 未使用，通过后核销。
+      if (!verificationCode) {
+        return res.say("验证码不能为空", 400);
+      }
+
+      const [userRows] = await db.execute(
+        "SELECT email FROM user_info WHERE id = ? AND is_deleted = 0 LIMIT 1",
+        [req.userId]
+      );
+      const userEmail = userRows[0]?.email;
+      if (!userEmail) {
+        return res.say("您的账号未绑定邮箱，无法重置 PIN", 400);
+      }
+
+      const fingerprint = "email_verify_pwd";
+      const [vRows] = await db.execute(
+        `SELECT * FROM device_crypto
+         WHERE fingerprint = ? AND scene = ? AND aes_key = ?`,
+        [fingerprint, userEmail, req.userId]
+      );
+      if (!vRows || vRows.length === 0) {
+        return res.say("验证码不存在或已过期", 400);
+      }
+      const record = vRows[0];
+      const now = Date.now();
+      if (now > Number(record.captcha_expires_at)) {
+        return res.say("验证码已过期", 400);
+      }
+      if (Number(record.captcha_verified) === 1) {
+        return res.say("验证码已被使用", 400);
+      }
+      if (record.captcha_code !== verificationCode) {
+        await db.execute(
+          `UPDATE device_crypto SET fail_count = fail_count + 1, updated_at = ?
+           WHERE fingerprint = ? AND scene = ? AND aes_key = ?`,
+          [now, fingerprint, userEmail, req.userId]
+        );
+        return res.say("验证码错误", 400);
+      }
 
       // 使用 UserPin.reset 重置 PIN
       const result = await UserPin.reset(req.userId, newPin);
+
+      // 核销验证码（仅重置成功后）
+      if (result.status === 200) {
+        await db.execute(
+          `UPDATE device_crypto SET captcha_verified = 1, updated_at = ?
+           WHERE fingerprint = ? AND scene = ? AND aes_key = ?`,
+          [now, fingerprint, userEmail, req.userId]
+        );
+      }
 
       return res.status(result.status).json({
         status: result.status,
@@ -548,6 +626,69 @@ class SecurityController {
     } catch (error) {
       console.error("重置 PIN 失败:", error);
       return res.status(500).json({ status: 500, message: "重置失败" });
+    }
+  }
+
+  /**
+   * 设备风险信号上报（安全整改 P2-14，2026-10-08）
+   *
+   * ## 语义：**纯信号，不拒服务**
+   * APP 端在登录后把本地检测到的环境风险（root / 调试器 / 模拟器 / Xposed / Frida）
+   * 上报到这里，仅落一条 `security_verify_log`（action_type='risk_signal'）供审计，
+   * **不做任何拦截** —— 是否处置由部署者看日志自行决定。
+   *
+   * ## 防伪造（对齐 P1-15 的教训）
+   * 客户端上报的任何字段都可能伪造。本端点因此：
+   *  - 只接受**白名单信号名**（见 SIGNAL_NAME_RE），自由文本一概不收；
+   *  - 信号数量与每项长度设上限（防灌库）；
+   *  - IP 一律服务端采集（req.security.ip → req.ip），不采信 body；
+   *  - pin_status 固定写 1 —— 该表 pin_status=0 会被 pinLockGuard 当成
+   *    「待验证/锁定」记录参与 PIN 拦截，风险信号绝不能影响那个流程。
+   *
+   * ## 幂等/降级
+   * 失败只告警不阻断（返回 200），上报失败不该影响 APP 正常使用。
+   */
+  async riskReport(req, res) {
+    // 信号名白名单：APP 端 DeviceRiskInspector 的输出全集。
+    // 新增检测项时两端同步维护（P2-14：APP/.../security/DeviceRiskInspector.kt）。
+    const SIGNAL_NAME_RE = /^[a-z0-9_:-]{1,40}$/;
+    const MAX_SIGNALS = 20;
+
+    try {
+      const raw = req.body?.data?.signals;
+
+      if (Array.isArray(raw) && raw.length > 0) {
+        const signals = raw
+          .filter((s) => typeof s === "string" && SIGNAL_NAME_RE.test(s))
+          .slice(0, MAX_SIGNALS);
+
+        if (signals.length > 0) {
+          const ip =
+            req.security?.ip || req.ip || "0.0.0.0";
+          const remark = JSON.stringify({
+            signals,
+            // 与 UserLog 的字段口径一致，便于登录日志关联分析
+            ua: String(req.headers["x-user-agent-custom"] || "").slice(0, 160),
+            device_model: String(req.headers["x-device-model"] || "").slice(0, 60),
+          });
+
+          await db.execute(
+            `INSERT INTO security_verify_log
+             (user_id, request_url, action_type, pin_status, error_count, remark, create_time)
+             VALUES (?, ?, 'risk_signal', 1, 0, ?, NOW())`,
+            [req.userId, "/security/risk-report", remark]
+          );
+          console.log(
+            `[risk-signal] user=${req.userId} ip=${ip} signals=[${signals.join(",")}]`
+          );
+        }
+      }
+
+      // 无论内容是否有效都返回成功：这是"尽力而为"的上报，不值得让客户端重试
+      return res.say("已接收", 200);
+    } catch (error) {
+      console.error("风险信号上报异常（不阻断）:", error);
+      return res.say("已接收", 200);
     }
   }
 }

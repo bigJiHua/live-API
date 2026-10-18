@@ -75,7 +75,7 @@ class CategoryController {
    */
   async create(req, res) {
     try {
-      const { name, type, iconUrl, remark } = req.body.data;
+      const { name, type, iconUrl, remark } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       const category = await Category.create({
         userId: req.userId,
@@ -101,7 +101,7 @@ class CategoryController {
    */
   async update(req, res) {
     try {
-      const { name, iconUrl, remark } = req.body.data;
+      const { name, iconUrl, remark } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       const category = await Category.update(req.params.id, req.userId, {
         name,

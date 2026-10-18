@@ -132,11 +132,21 @@ class AccountSettlement {
     }
 
     // 查询实体卡片类型（P2-10：使用事务连接，保证锁内读到己写入/最新状态）
+    // 🔒 2026-10-13（api.md P2-5）：补 user_id 归属校验，
+    //    原实现不带 user_id ⇒ 信用卡分支聚合未命中时兜底读他人卡的静态额度。
     const [cardRows] = await executor.execute(
-      "SELECT card_type, credit_limit, temp_limit FROM card_base WHERE id = ? AND is_deleted = 0",
-      [card_id]
+      "SELECT card_type, credit_limit, temp_limit FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0",
+      [card_id, user_id]
     );
     const cardType = cardRows[0]?.card_type;
+    // 🔒 2026-10-13（api.md P2-5）：实体卡不存在/不属本人 ⇒ 直接拒绝（含收入方向）。
+    //    原实现查不到时静默走储蓄卡分支，收入方向又总是放行 ⇒ 假卡ID可建收入。
+    if (!cardType) {
+      return {
+        valid: false,
+        message: "卡片不存在或无权访问",
+      };
+    }
     const creditLimit = parseFloat(cardRows[0]?.credit_limit) || 0;
     const tempLimit = parseFloat(cardRows[0]?.temp_limit) || 0;
 

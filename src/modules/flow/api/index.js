@@ -8,6 +8,10 @@ router.use(authGuard);
 router.get("/calendar", async (req, res) => {
   try {
     const { year, month } = req.query;
+    // 🔄 2026-10-13（api.md P3-16）：参数校验，缺参不再生成 "undefined-undefined-01"
+    if (!year || !month || !/^\d{4}$/.test(String(year)) || !/^\d{1,2}$/.test(String(month))) {
+      return res.say("year/month 参数不合法", 400);
+    }
     const m = String(month).padStart(2, '0');
     const startDate = `${year}-${m}-01`;
     const nextMonth = parseInt(month) + 1;
@@ -31,23 +35,12 @@ router.get("/calendar", async (req, res) => {
     });
     res.json({ status: 200, data: result });
   } catch (error) {
+    // 🔄 2026-10-13（api.md P2-13）：不再吞错返 200 空数据
     console.error("[Flow] calendar error:", error);
-    res.json({ status: 200, data: {} });
-  }
-});
-
-router.get("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [rows] = await execute(
-      "SELECT * FROM account WHERE id = ? AND user_id = ? AND is_deleted = 0", [id, req.userId]
-    );
-    if (!rows.length) return res.say("记录不存在", 404);
-    res.json({ status: 200, data: rows[0] });
-  } catch (error) {
-    console.error("[Flow] detail error:", error);
     res.say("查询失败", 500);
   }
 });
+
+// 🔒 2026-10-13（api.md §11）：GET /:id 已删——流水详情三端均走 /account/:id，无调用方。
 
 module.exports = router;

@@ -47,7 +47,12 @@ class User {
   static async findById(id) {
     const query = `SELECT * FROM ${this.tableName} WHERE id = ?`;
     const [rows] = await db.execute(query, [id]);
-    return { ...rows[0], login_pwd: "", pin_code: "" } || null;
+    // 🔄 2026-10-13 修复（api.md P2-3）：用户不存在时返回 null。
+    //    原实现 `return { ...rows[0], login_pwd: "", pin_code: "" } || null`——
+    //    对象字面量恒为 truthy，`|| null` 永不生效 ⇒ 用户不存在也返回空对象，
+    //    调用方（getCurrentUser 等）的 `if (!user)` 判空失效。
+    if (!rows[0]) return null;
+    return { ...rows[0], login_pwd: "", pin_code: "" };
   }
 
   /**
@@ -148,6 +153,12 @@ class User {
       }
 
       // --- 2. 构建 SQL 字段 ---
+      // ⚠ 2026-10-13 审计备注：user_info 表**没有 settings 列**（live.sql 无此字段），
+      //    故 fieldMap 不能加 settings —— 加了会让 UPDATE 直接 ER_BAD_FIELD_ERROR 500。
+      // 🔒 2026-10-13（api.md P2-16）：用户设置为设备级偏好（前端 localStorage），
+      //    GET/PUT /user/settings 接口与 getSettings/updateSettings 已整体删除；
+      //    三端（web/webview-APP/APP）无调用方。若未来确需跨设备同步设置，
+      //    须先 migration 加列 + live.sql 同步，再重建接口并重新评估。
       const fieldMap = {
         username: "username",
         avatar: "avatar",
@@ -176,26 +187,18 @@ class User {
       await db.execute(query, values);
 
       // --- 4. 自动化记录 UserLog ---
-      // 数据全部从 req.body 中获取（解密中间件已平铺）
+      // 🔒 安全整改 P1-15（补漏）：原先这里直接把 `req.body` 的平铺字段当成日志字段，
+      //    客户端可在改用户名请求里塞 login_ip / fingerprint / path 等同名键伪造日志；
+      //    且 `token: req.headers.authorization` 把完整 JWT（仅靠 append 内部截断 50 字符）
+    //    传进了日志。现在统一走服务端可信采集（见 common/utils/logFields.js）。
       if (_logData && req) {
         const UserLog = require("./log");
+        const {
+          buildServerSideLogFields,
+        } = require("../../../common/utils/logFields");
         await UserLog.append({
-          user_id: id,
+          ...buildServerSideLogFields(req, id),
           type: "change_username",
-          token: req.headers.authorization,
-          // 直接引用 req.body 里的平铺数据
-          login_ip:
-            req.body.login_ip === "unknown" ? req.ip : req.body.login_ip,
-          login_location: req.body.login_location,
-          user_agent: req.body.user_agent,
-          os_info: req.body.os_info,
-          browser_info: req.body.browser_info,
-          device_model: req.body.device_model,
-          fingerprint: req.body.fingerprint,
-          viewport: req.body.viewport,
-          pixel_ratio: req.body.pixel_ratio,
-          login_lang: req.body.login_lang,
-          path: req.body.path || "/profile/edit",
           status: 1,
           error_message: `修改用户名: [${_logData.oldName}] -> [${_logData.newName}]`,
         });

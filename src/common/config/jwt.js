@@ -1,11 +1,15 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const { resolveSecret } = require('../utils/secretGuard');
 
 /**
  * JWT 配置
+ *
+ * ⚠ secret 不再回退到硬编码的 'your-secret-key-change-this-in-production'：
+ * 生产环境缺失/弱值会直接抛错，避免用公开常量签发 JWT（等于任何人都能伪造身份）。
  */
 const jwtConfig = {
-  secret: process.env.JWT_SECRET || 'your-secret-key-change-this-in-production',
+  secret: resolveSecret('JWT_SECRET'),
   expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
 };

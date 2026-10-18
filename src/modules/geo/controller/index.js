@@ -4,6 +4,11 @@
  */
 const axios = require("axios");
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 const IPINFO_TOKEN = process.env.IPINFO_TOKEN || "";
 const AMAP_KEY = process.env.AMAP_KEY || "";
 
@@ -163,7 +168,7 @@ exports.getNetworkInfo = async (req, res) => {
     }
   } catch (err) {
     console.error("[geo/network]", err);
-    return res.json({ status: 500, message: err.message });
+    return res.json({ status: 500, ...buildErrorBody("操作失败", err) });
   }
 };
 
@@ -228,6 +233,6 @@ exports.getReverseGeocode = async (req, res) => {
     }
   } catch (err) {
     console.error("[geo/regeo]", err);
-    return res.json({ status: 500, message: err.message });
+    return res.json({ status: 500, ...buildErrorBody("操作失败", err) });
   }
 };

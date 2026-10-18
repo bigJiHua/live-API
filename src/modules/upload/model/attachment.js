@@ -11,37 +11,60 @@ class SysAttachment {
   /**
    * 【已启用】
    * 创建附件记录
+   * 🔄 2026-10-13（api.md P2-9）：失败改为抛错。
+   *    原实现失败时返回 { status: 500 } 不抛错，控制器 6 处调用均不检查 status，
+   *    导致 DB 写失败时文件已落盘却返"上传成功"（id:undefined）⇒ 孤儿文件 + 假成功。
+   *    统一为抛错后，由控制器的 catch 做文件清理，语义单一。
+   * 🔄 2026-10-13（哈希去重）：新增 fileHash 参数（SHA-256，原图内容）。
    * @param {Object} data - 附件数据
-   * @returns {Promise<Object>} 创建结果
+   * @returns {Promise<Object>} 创建结果 { status:200, id }
    */
-  static async create({ userId, busId, busType, remark, tags, fileName, filePath, fileSize, fileExt }) {
+  static async create({ userId, busId, busType, remark, tags, fileName, filePath, fileSize, fileExt, fileHash }) {
+    const id = nanoid(); // 字符串主键
+    const createTime = Date.now().toString(); // 存时间戳字符串
+
+    const query = `
+      INSERT INTO ${this.tableName}
+      (id, user_id, bus_id, bus_type, remark, tags, file_name, file_path, file_size, file_ext, file_hash, create_time, is_deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `;
+    const [result] = await db.execute(query, [
+      id,
+      userId,
+      busId || null,
+      busType,
+      remark || "用户上传的图片",
+      tags ? JSON.stringify(tags) : JSON.stringify(["默认"]),
+      fileName,
+      filePath,
+      fileSize || 0,
+      fileExt,
+      fileHash || null,
+      createTime
+    ]);
+
+    return { status: 200, id, busId: busId || null, message: "上传成功" };
+  }
+
+  /**
+   * 🔄 2026-10-13（哈希去重）：按 user_id + file_hash 查已有附件。
+   * 用于秒传：同一用户上传过相同内容的文件时直接复用，不落新盘。
+   * @returns {Promise<Object|null>} 已有附件记录
+   */
+  static async findByHash(userId, fileHash) {
+    if (!fileHash) return null;
     try {
-      const id = nanoid(); // 字符串主键
-      const createTime = Date.now().toString(); // 存时间戳字符串
-
-      const query = `
-        INSERT INTO ${this.tableName}
-        (id, user_id, bus_id, bus_type, remark, tags, file_name, file_path, file_size, file_ext, create_time, is_deleted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `;
-      const [result] = await db.execute(query, [
-        id,
-        userId,
-        busId || null,
-        busType,
-        remark || "用户上传的图片",
-        tags ? JSON.stringify(tags) : JSON.stringify(["默认"]),
-        fileName,
-        filePath,
-        fileSize || 0,
-        fileExt,
-        createTime
-      ]);
-
-      return { status: 200, id, busId: busId || null, message: "上传成功" };
+      const [rows] = await db.execute(
+        `SELECT * FROM ${this.tableName}
+         WHERE user_id = ? AND file_hash = ? AND is_deleted = 0
+         ORDER BY create_time DESC LIMIT 1`,
+        [userId, fileHash]
+      );
+      return rows[0] || null;
     } catch (error) {
-      console.error("创建附件记录失败:", error);
-      return { status: 500, message: "上传失败" };
+      // file_hash 列尚未迁移到位时不阻断上传（降级为不去重）
+      console.error("[SysAttachment] findByHash 失败（降级不去重）:", error.message);
+      return null;
     }
   }
 

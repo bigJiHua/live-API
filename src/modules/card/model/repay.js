@@ -138,10 +138,11 @@ class CardRepay {
     repayMethod,
     repayMethodCardId,
     repayTime,
-    remark
+    remark,
+    mergeMode = false
   }) {
     const now = String(Date.now());
-    const repayAmountNum = parseFloat(repayAmount);
+    let repayAmountNum = parseFloat(repayAmount);
 
     if (repayAmountNum <= 0) {
       throw new Error('还款金额必须大于0');
@@ -166,15 +167,27 @@ class CardRepay {
     }
 
     // 获取当前账单（如果有）（H6：限定 user_id + 校验账单归属该卡片）
+    // 🔒 2026-10-13（api.md P2-7）：改 FOR UPDATE 行锁——并发两笔还款打同一账单时串行，
+    //    后到者必须读到前者的已还结果，不能按过期快照重复扣款。
     let bill = null;
     if (billId) {
       const [billRows] = await conn.execute(
-        'SELECT * FROM card_bill WHERE id = ? AND user_id = ? AND is_deleted = 0',
+        'SELECT * FROM card_bill WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
         [billId, userId]
       );
       bill = billRows[0];
       if (!bill) throw new Error('账单不存在');
       if (bill.card_id !== cardId) throw new Error('账单与卡片不匹配，无法还款');
+
+      // 🔒 2026-10-13（api.md P2-7）：合并还款金额来自事务外快照，并发下可能过期
+      //    （另一笔合并还款/单笔还款已动过该账单）。锁内重读 need_repay 后收敛：
+      //    已结清(=0) → 返回 null 由调用方跳过；仍欠但少于快照 → 按真实待还扣。
+      //    单笔还款（mergeMode=false）不收敛——用户主动多还形成溢缴是合法设计（H7）。
+      if (mergeMode) {
+        const currentNeed = parseFloat(bill.need_repay) || 0;
+        if (currentNeed <= 0) return null;
+        if (currentNeed < repayAmountNum) repayAmountNum = currentNeed;
+      }
     }
 
     // ===== 验证还款来源（P0-2 审计：余额校验在事务内用 conn 重查）=====
@@ -349,11 +362,15 @@ class CardRepay {
       }
     }
     if (!debts.length) throw new Error('共享池内无待还欠款');
-    const totalAmount = debts.reduce((s, d) => s + d.amount, 0);
 
     // 4. 单事务逐笔结清（原子：任一失败整体回滚）
+    // 🔒 2026-10-13（api.md P2-7）：debts 是事务外快照，并发双打时第二笔会按过期金额
+    //    重复扣款成溢缴（实测：两笔并发 merge 各扣 2000，实欠 2000 → 溢缴 2000）。
+    //    现传 mergeMode：#execRepayTx 锁内重读 need_repay 收敛——已结清跳过、
+    //    部分已还按真实待还扣，杜绝重复扣款；总额/笔数按实际执行结果返回。
     const conn = await db.getConnection();
     const repayIds = [];
+    let actualAmount = 0;
     try {
       await conn.beginTransaction();
       for (const d of debts) {
@@ -365,9 +382,13 @@ class CardRepay {
           repayMethod,
           repayMethodCardId,
           repayTime,
-          remark: remark || `信报合一合并还款(${pool.bank_name || ''})`
+          remark: remark || `信报合一合并还款(${pool.bank_name || ''})`,
+          mergeMode: true
         });
-        repayIds.push(rid);
+        if (rid) {
+          repayIds.push(rid);
+          actualAmount += d.amount;
+        }
       }
       await conn.commit();
     } catch (e) {
@@ -385,7 +406,8 @@ class CardRepay {
       });
     });
 
-    return { totalAmount, count: debts.length, repayIds, cardIds: cards.map((c) => c.id) };
+    // 🔄 2026-10-13（api.md P2-7）：返回实际结清金额/笔数（并发下可能少于快照）
+    return { totalAmount: actualAmount, count: repayIds.length, repayIds, cardIds: cards.map((c) => c.id) };
   }
 
   /** 事务内冲正一笔来源流水（创建等额反向收入 + 软删原流水，恢复资金） */

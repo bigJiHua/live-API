@@ -1,7 +1,29 @@
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const sharp = require("sharp");
 const SysAttachment = require("../model/attachment");
+
+/** 安全删除文件（存在才删，失败只告警不阻断） */
+function safeUnlink(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (e) {
+    console.warn(`[上传清理] 删除失败（忽略）: ${filePath} ${e.message}`);
+  }
+}
+
+/** 计算文件内容 SHA-256（用于去重秒传） */
+function computeFileHash(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
 
 /**
  * 生成文件存储路径（图片统一转 WebP）
@@ -143,6 +165,11 @@ class UploadController {
    * @param {string} tags - 图片标签，逗号分隔
    */
   async upload(req, res) {
+    // 🔄 2026-10-13（api.md P2-9）：孤儿文件修复 + 哈希去重秒传。
+    //    targetPath/thumbFullPath 提到方法作用域，任何失败路径都在 catch 统一清理
+    //    （原实现只删 multer 临时文件，已落盘的目标文件/缩略图变孤儿）。
+    let targetPath = null;
+    let thumbFullPath = null;
     try {
       const { type = "image", busType: requestedBusType, bus_type, busId, bus_id, remark, tags } = req.body;
       const busType = requestedBusType || bus_type || "other";
@@ -196,6 +223,40 @@ class UploadController {
         });
       }
 
+      // 5.5 内容哈希（原图，压缩/移动之前算）
+      const fileHash = await computeFileHash(file.path);
+
+      // 5.6 秒传去重：同一用户已上传过相同内容 ⇒ 直接复用已有记录，不落新盘
+      const dup = await SysAttachment.findByHash(req.userId, fileHash);
+      if (dup && dup.file_path) {
+        // 旧记录对应的物理文件必须仍在（可能已被删除），否则不能复用
+        const dupPhysical = path.join(
+          UploadController.config.uploadDir,
+          dup.file_path.replace(/^\/uploads\//, "")
+        );
+        if (fs.existsSync(dupPhysical)) {
+          safeUnlink(file.path); // 删掉本次 multer 临时文件
+          const dupIsImage = [".webp", ".jpg", ".jpeg", ".png", ".gif"].includes(
+            (dup.file_ext || "").toLowerCase()
+          );
+          return res.status(200).json({
+            status: 200,
+            message: "上传成功（秒传，复用已有文件）",
+            data: {
+              id: dup.id,
+              url: dup.file_path,
+              thumbnail: dupIsImage ? dup.file_path : dup.file_path,
+              fileName: dup.file_name,
+              fileSize: dup.file_size,
+              fileExt: dup.file_ext,
+              busId: dup.bus_id,
+              busType: dup.bus_type,
+              deduped: true,
+            },
+          });
+        }
+      }
+
       // 6. 生成文件路径
       const isImage = allowedTypes.includes(file.mimetype);
       const relativePath = generateFilePath(file, busType, isImage);
@@ -204,7 +265,7 @@ class UploadController {
         UploadController.config.uploadDir,
         path.dirname(relativePath)
       );
-      const targetPath = path.join(
+      targetPath = path.join(
         UploadController.config.uploadDir,
         relativePath
       );
@@ -226,15 +287,21 @@ class UploadController {
             .toFormat("webp", { quality: 50, lossless: false })
             .toFile(targetPath);
           finalSize = fs.statSync(targetPath).size;
-          fs.unlinkSync(file.path);
+          safeUnlink(file.path);
 
           // 立即生成缩略图
           const thumbnailPath = await generateThumbnail(
             `/uploads/${relativePath}`,
             busType
           );
+          thumbFullPath = thumbnailPath
+            ? path.join(
+                UploadController.config.uploadDir,
+                thumbnailPath.replace(/^uploads\//, "")
+              )
+            : null;
 
-          // 写入数据库
+          // 写入数据库（失败抛错 → catch 清理 targetPath/缩略图）
           const result = await SysAttachment.create({
             userId: req.userId,
             busId: resolvedBusId,
@@ -245,6 +312,7 @@ class UploadController {
             filePath: `/uploads/${relativePath}`,
             fileSize: finalSize,
             fileExt: ".webp",
+            fileHash,
           });
 
           // 返回结果
@@ -254,7 +322,8 @@ class UploadController {
             data: {
               id: result.id,
               url: `/uploads/${relativePath}`,
-              thumbnail: `/${thumbnailPath}`,
+              // 🔄 缩略图失败不再返回 "/null" 假 URL
+              thumbnail: thumbnailPath ? `/${thumbnailPath}` : `/uploads/${relativePath}`,
               fileName: newFileName,
               fileSize: finalSize,
               fileExt: ".webp",
@@ -272,6 +341,12 @@ class UploadController {
             `/uploads/${relativePath}`,
             busType
           );
+          thumbFullPath = thumbnailPath
+            ? path.join(
+                UploadController.config.uploadDir,
+                thumbnailPath.replace(/^uploads\//, "")
+              )
+            : null;
 
           // 写入数据库
           const result = await SysAttachment.create({
@@ -284,6 +359,7 @@ class UploadController {
             filePath: `/uploads/${relativePath}`,
             fileSize: finalSize,
             fileExt: path.extname(newFileName),
+            fileHash,
           });
 
           // 返回结果
@@ -293,7 +369,7 @@ class UploadController {
             data: {
               id: result.id,
               url: `/uploads/${relativePath}`,
-              thumbnail: `/${thumbnailPath}`,
+              thumbnail: thumbnailPath ? `/${thumbnailPath}` : `/uploads/${relativePath}`,
               fileName: newFileName,
               fileSize: finalSize,
               fileExt: path.extname(newFileName),
@@ -318,6 +394,7 @@ class UploadController {
           filePath: `/uploads/${relativePath}`,
           fileSize: finalSize,
           fileExt: path.extname(newFileName),
+          fileHash,
         });
 
         // 返回结果
@@ -338,9 +415,11 @@ class UploadController {
       }
     } catch (error) {
       console.error("上传文件失败:", error);
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      // 🔄 2026-10-13（api.md P2-9）：孤儿文件修复 —— 清理本次已落盘的
+      //    目标文件 + 缩略图 + multer 临时文件（原实现只删临时文件）。
+      safeUnlink(targetPath);
+      safeUnlink(thumbFullPath);
+      if (req.file) safeUnlink(req.file.path);
       return res.status(500).json({ status: 500, message: "上传失败" });
     }
   }
@@ -386,93 +465,169 @@ class UploadController {
       const errors = [];
 
       for (const file of files) {
-        // 校验类型和大小
-        if (!allowedTypes.includes(file.mimetype)) {
-          fs.unlinkSync(file.path);
-          errors.push(`${file.originalname}: 不支持的文件类型`);
-          continue;
-        }
+        // 🔄 2026-10-13（api.md P2-9）：单文件隔离 —— 单个文件失败（含 DB 写失败抛错）
+        //    只记入 errors 并清理该文件，不再中断整批 / 不再留孤儿文件。
+        let targetPath = null;
+        let thumbFullPath = null;
+        try {
+          // 校验类型和大小
+          if (!allowedTypes.includes(file.mimetype)) {
+            safeUnlink(file.path);
+            errors.push(`${file.originalname}: 不支持的文件类型`);
+            continue;
+          }
 
-        if (file.size > UploadController.config.maxFileSize) {
-          fs.unlinkSync(file.path);
-          errors.push(`${file.originalname}: 文件过大`);
-          continue;
-        }
+          if (file.size > UploadController.config.maxFileSize) {
+            safeUnlink(file.path);
+            errors.push(`${file.originalname}: 文件过大`);
+            continue;
+          }
 
-        // 生成路径
-        const isImage = allowedTypes.includes(file.mimetype);
-        const relativePath = generateFilePath(file, busType, isImage);
-        const newFileName = path.basename(relativePath); // 新的文件名
-        const targetDir = path.join(
-          UploadController.config.uploadDir,
-          path.dirname(relativePath)
-        );
-        const targetPath = path.join(
-          UploadController.config.uploadDir,
-          relativePath
-        );
-
-        if (!fs.existsSync(targetDir)) {
-          fs.mkdirSync(targetDir, { recursive: true });
-        }
-
-        // 图片压缩为 WebP（SVG除外，大于1MB才压缩）
-        let finalSize = file.size;
-        let thumbnailPath = `/uploads/${relativePath}`;
-        const isSvg = file.mimetype === "image/svg+xml";
-        const needCompress = file.size > 1024 * 1024; // 大于1MB才压缩
-
-        if (isImage && !isSvg) {
-          if (needCompress) {
-            // 大于1MB：压缩为 WebP
-            const buffer = fs.readFileSync(file.path);
-            await sharp(buffer)
-              .toFormat("webp", { quality: 50, lossless: false })
-              .toFile(targetPath);
-            finalSize = fs.statSync(targetPath).size;
-            fs.unlinkSync(file.path);
-
-            // 立即生成缩略图
-            thumbnailPath = await generateThumbnail(
-              `/uploads/${relativePath}`,
-              busType
+          // 内容哈希 + 秒传去重
+          const fileHash = await computeFileHash(file.path);
+          const dup = await SysAttachment.findByHash(req.userId, fileHash);
+          if (dup && dup.file_path) {
+            const dupPhysical = path.join(
+              UploadController.config.uploadDir,
+              dup.file_path.replace(/^\/uploads\//, "")
             );
+            if (fs.existsSync(dupPhysical)) {
+              safeUnlink(file.path);
+              results.push({
+                id: dup.id,
+                url: dup.file_path,
+                thumbnail: dup.file_path,
+                fileName: dup.file_name,
+                fileSize: dup.file_size,
+                fileExt: dup.file_ext,
+                busId: dup.bus_id,
+                busType: dup.bus_type,
+                remark: remark || "用户上传的图片",
+                tags: tags || "默认",
+                deduped: true,
+              });
+              continue;
+            }
+          }
 
-            // 写入数据库
-            const result = await SysAttachment.create({
-              userId: req.userId,
-              busId: resolvedBusId,
-              busType: busType,
-              remark: remark || "用户上传的图片",
-              tags: tags || "默认",
-              fileName: newFileName,
-              filePath: `/uploads/${relativePath}`,
-              fileSize: finalSize,
-              fileExt: ".webp",
-            });
+          // 生成路径
+          const isImage = allowedTypes.includes(file.mimetype);
+          const relativePath = generateFilePath(file, busType, isImage);
+          const newFileName = path.basename(relativePath); // 新的文件名
+          const targetDir = path.join(
+            UploadController.config.uploadDir,
+            path.dirname(relativePath)
+          );
+          targetPath = path.join(
+            UploadController.config.uploadDir,
+            relativePath
+          );
 
-            results.push({
-              id: result.id,
-              url: `/uploads/${relativePath}`,
-              thumbnail: `/${thumbnailPath}`,
-              fileName: newFileName,
-              fileSize: finalSize,
-              fileExt: ".webp",
-              busId: resolvedBusId,
-              remark: remark || "用户上传的图片",
-              tags: tags || "默认",
-              compressed: true,
-            });
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+
+          // 图片压缩为 WebP（SVG除外，大于1MB才压缩）
+          let finalSize = file.size;
+          let thumbnailPath = `/uploads/${relativePath}`;
+          const isSvg = file.mimetype === "image/svg+xml";
+          const needCompress = file.size > 1024 * 1024; // 大于1MB才压缩
+
+          if (isImage && !isSvg) {
+            if (needCompress) {
+              // 大于1MB：压缩为 WebP
+              const buffer = fs.readFileSync(file.path);
+              await sharp(buffer)
+                .toFormat("webp", { quality: 50, lossless: false })
+                .toFile(targetPath);
+              finalSize = fs.statSync(targetPath).size;
+              safeUnlink(file.path);
+
+              // 立即生成缩略图
+              thumbnailPath = await generateThumbnail(
+                `/uploads/${relativePath}`,
+                busType
+              );
+              thumbFullPath = thumbnailPath
+                ? path.join(
+                    UploadController.config.uploadDir,
+                    thumbnailPath.replace(/^uploads\//, "")
+                  )
+                : null;
+
+              // 写入数据库
+              const result = await SysAttachment.create({
+                userId: req.userId,
+                busId: resolvedBusId,
+                busType: busType,
+                remark: remark || "用户上传的图片",
+                tags: tags || "默认",
+                fileName: newFileName,
+                filePath: `/uploads/${relativePath}`,
+                fileSize: finalSize,
+                fileExt: ".webp",
+                fileHash,
+              });
+
+              results.push({
+                id: result.id,
+                url: `/uploads/${relativePath}`,
+                thumbnail: thumbnailPath ? `/${thumbnailPath}` : `/uploads/${relativePath}`,
+                fileName: newFileName,
+                fileSize: finalSize,
+                fileExt: ".webp",
+                busId: resolvedBusId,
+                remark: remark || "用户上传的图片",
+                tags: tags || "默认",
+                compressed: true,
+              });
+            } else {
+              // 小于1MB：不压缩，直接移动
+              fs.renameSync(file.path, targetPath);
+
+              // 生成缩略图
+              thumbnailPath = await generateThumbnail(
+                `/uploads/${relativePath}`,
+                busType
+              );
+              thumbFullPath = thumbnailPath
+                ? path.join(
+                    UploadController.config.uploadDir,
+                    thumbnailPath.replace(/^uploads\//, "")
+                  )
+                : null;
+
+              // 写入数据库
+              const result = await SysAttachment.create({
+                userId: req.userId,
+                busId: resolvedBusId,
+                busType: busType,
+                remark: remark || "用户上传的图片",
+                tags: tags || "默认",
+                fileName: newFileName,
+                filePath: `/uploads/${relativePath}`,
+                fileSize: finalSize,
+                fileExt: path.extname(newFileName),
+                fileHash,
+              });
+
+              results.push({
+                id: result.id,
+                url: `/uploads/${relativePath}`,
+                thumbnail: thumbnailPath ? `/${thumbnailPath}` : `/uploads/${relativePath}`,
+                fileName: newFileName,
+                fileSize: finalSize,
+                fileExt: path.extname(newFileName),
+                busId: resolvedBusId,
+                remark: remark || "用户上传的图片",
+                tags: tags || "默认",
+                compressed: false,
+              });
+            }
           } else {
-            // 小于1MB：不压缩，直接移动
+            // SVG 或非图片：直接移动，不转格式
             fs.renameSync(file.path, targetPath);
 
-            // 生成缩略图
-            thumbnailPath = await generateThumbnail(
-              `/uploads/${relativePath}`,
-              busType
-            );
-
             // 写入数据库
             const result = await SysAttachment.create({
               userId: req.userId,
@@ -483,51 +638,30 @@ class UploadController {
               fileName: newFileName,
               filePath: `/uploads/${relativePath}`,
               fileSize: finalSize,
-              fileExt: path.extname(newFileName),
+              fileExt: isSvg ? ".svg" : path.extname(newFileName).toLowerCase(),
+              fileHash,
             });
 
             results.push({
               id: result.id,
               url: `/uploads/${relativePath}`,
-              thumbnail: `/${thumbnailPath}`,
+              thumbnail: `/uploads/${relativePath}`,
               fileName: newFileName,
               fileSize: finalSize,
-              fileExt: path.extname(newFileName),
+              fileExt: isSvg ? ".svg" : path.extname(newFileName).toLowerCase(),
               busId: resolvedBusId,
               remark: remark || "用户上传的图片",
               tags: tags || "默认",
               compressed: false,
             });
           }
-        } else {
-          // SVG 或非图片：直接移动，不转格式
-          fs.renameSync(file.path, targetPath);
-
-          // 写入数据库
-          const result = await SysAttachment.create({
-            userId: req.userId,
-            busId: resolvedBusId,
-            busType: busType,
-            remark: remark || "用户上传的图片",
-            tags: tags || "默认",
-            fileName: newFileName,
-            filePath: `/uploads/${relativePath}`,
-            fileSize: finalSize,
-            fileExt: isSvg ? ".svg" : path.extname(newFileName).toLowerCase(),
-          });
-
-          results.push({
-            id: result.id,
-            url: `/uploads/${relativePath}`,
-            thumbnail: `/uploads/${relativePath}`,
-            fileName: newFileName,
-            fileSize: finalSize,
-            fileExt: isSvg ? ".svg" : path.extname(newFileName).toLowerCase(),
-            busId: resolvedBusId,
-            remark: remark || "用户上传的图片",
-            tags: tags || "默认",
-            compressed: false,
-          });
+        } catch (fileErr) {
+          // 单文件失败：清理该文件已落盘内容，记 errors，继续下一个
+          console.error(`批量上传单文件失败 ${file.originalname}:`, fileErr);
+          safeUnlink(targetPath);
+          safeUnlink(thumbFullPath);
+          safeUnlink(file.path);
+          errors.push(`${file.originalname}: 上传失败`);
         }
       }
 

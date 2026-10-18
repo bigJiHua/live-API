@@ -104,7 +104,7 @@ class CardBillController {
       const bill = await CardBill.update(
         req.params.id,
         req.userId,
-        req.body.data
+        req.body.data || req.body // 🔄 2026-10-13（api.md P2-12 同模式）
       );
 
       if (!bill) return res.say("账单不存在", 404);
@@ -144,40 +144,6 @@ class CardBillController {
     } catch (error) {
       console.error("重建账单错误:", error);
       return res.say("重建失败", 500);
-    }
-  }
-
-  /**
-   * 批量重建所有信用卡账单（修复历史数据）
-   */
-  async rebuildAll(req, res) {
-    try {
-      const creditCards = await Card.findAll(req.userId, { cardType: 'credit' });
-      const results = { total: 0, success: 0, failed: 0, cards: [] };
-
-      for (const card of creditCards) {
-        try {
-          // [CreditCore] 统一重算
-          const billData = await CreditCore.syncCardBills(card.id, req.userId);
-          results.total++;
-          if (billData) {
-            results.success++;
-            results.cards.push({ cardId: card.id, cardName: card.alias || card.last4_no, months: billData.length });
-          }
-        } catch (cardError) {
-          results.failed++;
-          console.error(`重建卡片 ${card.id} 失败:`, cardError.message);
-        }
-      }
-
-      return res.json({
-        status: 200,
-        message: `批量重建完成：成功 ${results.success} 张, 失败 ${results.failed} 张`,
-        data: results,
-      });
-    } catch (error) {
-      console.error("批量重建错误:", error);
-      return res.say("批量重建失败", 500);
     }
   }
 

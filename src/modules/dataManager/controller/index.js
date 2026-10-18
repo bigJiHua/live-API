@@ -1,4 +1,9 @@
 const fs = require('fs');
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 const path = require('path');
 const os = require('os');
 const AdmZip = require('adm-zip');
@@ -223,7 +228,7 @@ class DataManagerController {
       });
     } catch (error) {
       console.error('[DataManager] importSql error:', error);
-      return res.json({ status: 500, message: error.message || 'SQL 导入失败' });
+      return res.json({ status: 500, ...buildErrorBody('SQL 导入失败', error) });
     }
   }
 
@@ -260,7 +265,7 @@ class DataManagerController {
       });
     } catch (error) {
       console.error('[DataManager] createSystemBackup error:', error);
-      res.json({ status: 500, message: error.message || '系统备份失败' });
+      res.json({ status: 500, ...buildErrorBody('系统备份失败', error) });
     }
   }
 

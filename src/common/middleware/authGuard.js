@@ -1,19 +1,40 @@
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
+const { readTokenFromCookies } = require("../utils/authCookie");
+
+/**
+ * 取出请求携带的 JWT（安全整改 P0-5，2026-10-08）
+ *
+ * ## 为什么要双通道
+ * - **Cookie**：web 端。token 存在 httpOnly Cookie 里，JS 读不到 ⇒ XSS 无法窃取。
+ * - **Bearer 头**：`APP`（原生 Kotlin）与 `webview-APP` 目前**只发 Authorization 头**，
+ *   不会自动带 Cookie。若只认 Cookie，这两端会直接登不上（401）。
+ *   因此保留 Bearer 作为兼容通道。
+ *
+ * 优先级：Bearer 优先（显式 ⇒ 便于排查是哪一端的问题），其次 Cookie。
+ * 将来若三端都改用 Cookie，可把Bearer 分支标记为@deprecated。
+ */
+function extractToken(req) {
+  const authHeader = req.headers && req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const t = authHeader.slice(7).trim();
+    if (t) return t;
+  }
+  // httpOnly Cookie（web 端）
+  return readTokenFromCookies(req.cookies);
+}
 
 /**
  * JWT 认证守卫
- * 验证请求头中的 Bearer Token
+ * 验证请求头中的 Bearer Token，或 Cookie 中的 httpOnly token
  */
 const authGuard = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    const token = extractToken(req);
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!token) {
       return res.json({ status: 401, message: "未提供认证令牌" });
     }
-
-    const token = authHeader.split(" ")[1];
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -64,3 +85,6 @@ const authGuard = async (req, res, next) => {
 };
 
 module.exports = authGuard;
+// 🔄 2026-10-12：导出双通道取 token 的口径函数，供 pinSecurityGuard 等中间件复用，
+// 避免「Bearer 优先 → Cookie 回落」在多处各写一份后再分叉
+module.exports.extractToken = extractToken;

@@ -1,5 +1,10 @@
 const DebitAccount = require('../model/debit');
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 /**
  * 借记卡账务控制器
  * 处理借记卡/虚拟账户的收支创建、更新、冲正
@@ -12,7 +17,7 @@ class DebitController {
     try {
       const transaction = await DebitAccount.create({
         userId: req.userId,
-        ...req.body.data,
+        ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
       });
 
       return res.status(200).json({
@@ -24,7 +29,7 @@ class DebitController {
       console.error("创建借记卡收支记录错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "创建失败"
+        ...buildErrorBody("创建失败", error)
       });
     }
   }
@@ -48,7 +53,7 @@ class DebitController {
       console.error("更新借记卡收支记录错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "更新失败"
+        ...buildErrorBody("更新失败", error)
       });
     }
   }
@@ -58,7 +63,8 @@ class DebitController {
    */
   async reverseDebit(req, res) {
     try {
-      const { remark } = req.body || {};
+      // 🔄 2026-10-13 修复（api.md F-C）：双路径兼容（同 updateRemark）。
+      const { remark } = req.body.data || req.body;
 
       const result = await DebitAccount.reverseDebitById(req.params.id, req.userId, remark);
 
@@ -89,7 +95,8 @@ class DebitController {
    */
   async reverseTransfer(req, res) {
     try {
-      const { remark } = req.body || {};
+      // 🔄 2026-10-13 修复（api.md F-C）：双路径兼容（同 updateRemark）。
+      const { remark } = req.body.data || req.body;
 
       const result = await DebitAccount.reverseTransferById(req.params.id, req.userId, remark);
 
@@ -105,7 +112,7 @@ class DebitController {
       console.error("转账冲正错误:", error);
       return res.status(400).json({
         status: 400,
-        message: error.message || "冲正失败"
+        ...buildErrorBody("冲正失败", error)
       });
     }
   }

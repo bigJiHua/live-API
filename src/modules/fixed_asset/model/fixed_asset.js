@@ -156,8 +156,12 @@ class FixedAsset {
     if (!existing) throw new Error('资产记录不存在');
 
     // 如果修改了影响折旧的字段，重新计算相关值
+    // 🔄 2026-10-13 修复（api.md P1-5）：fields 里存的是 "use_years = ?" 字符串，
+    //    原实现 `fields.includes('use_years')` 恒为 false ⇒ 改年限/残值率从不重算
+    //    use_months/residual_val/month_deprec（折旧数据全停留在旧值）。
+    //    改用 startsWith 判断字段名前缀。
     const deprecFields = ['use_years', 'residual_rate'];
-    const needsRecalc = deprecFields.some(f => fields.includes(f));
+    const needsRecalc = deprecFields.some(f => fields.some(x => x.startsWith(f + ' ')));
 
     if (needsRecalc) {
       const buyPrice = parseFloat(existing.buy_price);
@@ -170,15 +174,17 @@ class FixedAsset {
         ? Math.round(totalDepreciable / useMonths * 100) / 100 
         : 0;
 
-      if (!fields.includes('use_months')) {
+      // 同上的 startsWith 模式（allowedFields 不含这三个计算列，恒 push 一次；
+      //  用 startsWith 是为了将来若放开计算列入参也不产生重复列）
+      if (!fields.some(x => x.startsWith('use_months '))) {
         fields.push('use_months = ?');
         params.push(useMonths);
       }
-      if (!fields.includes('residual_val')) {
+      if (!fields.some(x => x.startsWith('residual_val '))) {
         fields.push('residual_val = ?');
         params.push(residualVal);
       }
-      if (!fields.includes('month_deprec')) {
+      if (!fields.some(x => x.startsWith('month_deprec '))) {
         fields.push('month_deprec = ?');
         params.push(monthDeprec);
       }

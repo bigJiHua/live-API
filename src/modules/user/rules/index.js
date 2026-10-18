@@ -28,6 +28,24 @@ exports.profile = {
     .unknown(true),
 };
 
+// 发送邮箱验证码规则
+// 🔒 2026-10-12 修复（api.md P1-1）：stripUnknown 会剥掉 data 内/顶层未定义字段
+//    （含客户端可能塞入的 userId），与控制器 `req.userId` 归一形成双层防护。
+exports.emailSendCode = {
+  body: joi
+    .object({
+      data: joi
+        .object({
+          email: joi.string().email().messages({
+            "string.email": "邮箱格式不正确",
+          }),
+          type: joi.string().valid("email", "pwd").default("email"),
+        })
+        .required(),
+    })
+    .unknown(true),
+};
+
 // 修改邮箱验证规则
 exports.emailChange = {
   body: joi

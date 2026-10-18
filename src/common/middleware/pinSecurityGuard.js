@@ -26,6 +26,8 @@ const db = require("../../common/config/db");
 const bcrypt = require("bcryptjs");
 const pinLockGuard = require("./pinLockGuard");
 const { resolvePassword } = require("../../common/utils/rsaKeys");
+// 🔄 2026-10-12：复用 authGuard 的双通道取 token（Bearer 优先 → httpOnly Cookie 回落）
+const { extractToken: extractAuthToken } = require("./authGuard");
 
 /** 读取并解密请求体中的 PIN（支持 RSA 密文数组） */
 const readPin = (req) => resolvePassword(req.body?.data?.pin);
@@ -42,14 +44,77 @@ const ROUTE_VERIFY_API = "/security/pin/route-verify";
  * @property SENSITIVE_WINDOW   敏感操作检查时间窗口（秒，默认 60 秒）
  * @property SENSITIVE_LIMIT    敏感操作次数上限（默认 10 次），超限触发 PIN 验证
  */
+/** 从环境变量读正整数，非法/缺失时回落到默认值 */
+function envInt(name, fallback) {
+  const n = parseInt(process.env[name], 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * 风控模式
+ * - `enforce`（默认，严格）：超限返回 8303，弹 PIN 输入框
+ * - `observe`：照常计数，超限**只告警不拦截**（用户体感等价于修复前），用于灰度观测阈值是否合理
+ * - `off`    ：完全不计数、不拦截（最终逃生阀）
+ *
+ * 三种模式都可用 `.env` 的 PIN_RISK_MODE 切换并重启生效，无需改代码或回滚版本。
+ */
+const RISK_MODE = String(process.env.PIN_RISK_MODE || "enforce").toLowerCase();
+
+// 非严格模式在启动时显式告警：避免「以为是 enforce、实际跑在 observe」的静默风险
+if (RISK_MODE !== "enforce") {
+  console.warn(
+    `[pinSecurityGuard] ⚠ PIN_RISK_MODE=${RISK_MODE} —— 非严格模式，风控超限不会拦截（仅告警）。` +
+      `生产环境请确保为 enforce。`
+  );
+}
+
 const CONFIG = {
   MAX_ERROR_COUNT: 3,
   LOCK_MULTIPLIER: 30,
-  FREQ_WINDOW: 60,
-  FREQ_LIMIT: 60,
-  SENSITIVE_WINDOW: 60,
-  SENSITIVE_LIMIT: 10,
+  /**
+   * 以下四个阈值默认值与历史实现完全一致（60/60s、10/60s），
+   * 外置只为「现场可调、不用发版」，不改变默认行为。
+   */
+  FREQ_WINDOW: envInt("PIN_RISK_FREQ_WINDOW", 60),
+  FREQ_LIMIT: envInt("PIN_RISK_FREQ_LIMIT", 60),
+  SENSITIVE_WINDOW: envInt("PIN_RISK_SENSITIVE_WINDOW", 60),
+  SENSITIVE_LIMIT: envInt("PIN_RISK_SENSITIVE_LIMIT", 10),
+  /**
+   * 放行窗口（秒）：PIN 验证成功后，在此期间内的并发请求不再重复验证。
+   * ⚠ 窗口只对「刚验证完的这 N 秒」有效，过期即恢复风控检查，
+   * 不得在过期时把 verifiedAt 续期为当前时间（会导致风控永久失效）。
+   */
+  PASS_WINDOW: envInt("PIN_PASS_WINDOW", 30),
 };
+
+/** 放行窗口毫秒数 */
+const PASS_WINDOW_MS = CONFIG.PASS_WINDOW * 1000;
+
+/* 🔄 2026-10-13（api.md P3-3）：内存 Map 定期回收。
+ *    freqMap/sensitiveMap/verifiedMap 原实现只写不删（滑动窗口 filter 只清数组内时间戳，
+ *    key 永驻）⇒ 长期运行随用户量线性增长。每 10 分钟清理一次过期 key；
+ *    条目数超 5000 时整体重置（宁可短暂放宽，不无限增长）。
+ */
+const MEMORY_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+const MEMORY_MAP_MAX = 5000;
+function sweepRiskMaps() {
+  const now = Date.now();
+  for (const map of [freqMap, sensitiveMap]) {
+    for (const [key, arr] of map.entries()) {
+      if (!arr.length || now - arr[arr.length - 1] > CONFIG.FREQ_WINDOW * 1000) map.delete(key);
+    }
+  }
+  for (const [key, session] of verifiedMap.entries()) {
+    if (now - session.verifiedAt > PASS_WINDOW_MS) verifiedMap.delete(key);
+  }
+  if (freqMap.size + sensitiveMap.size + verifiedMap.size > MEMORY_MAP_MAX) {
+    freqMap.clear();
+    sensitiveMap.clear();
+    verifiedMap.clear();
+  }
+}
+const riskSweepTimer = setInterval(sweepRiskMaps, MEMORY_SWEEP_INTERVAL_MS);
+if (typeof riskSweepTimer.unref === "function") riskSweepTimer.unref();
 
 /**
  * PIN 响应码
@@ -146,6 +211,62 @@ function checkSensitive(userId) {
     userId,
     CONFIG.SENSITIVE_WINDOW,
     CONFIG.SENSITIVE_LIMIT
+  );
+}
+
+/**
+ * 清除用户的内存放行会话（系统锁定 / 风险锁定时必须调用）
+ *
+ * 目的：分支 1.5 与分支 3 都会读 verifiedMap 的 30 秒放行窗口。
+ * 如果锁定时不清除，用户在「上一次 PIN 验证成功后 30 秒内」锁定系统，
+ * 之后的所有请求会命中放行窗口直接 next()，锁形同虚设。
+ */
+function clearVerifiedSession(userId) {
+  verifiedMap.delete(userId);
+  freqMap.delete(userId);
+  sensitiveMap.delete(userId);
+}
+
+/**
+ * 用户「成功通过 PIN 验证」后调用：开启放行窗口 + 重置风控计数。
+ *
+ * 为什么必须重置 freqMap / sensitiveMap：
+ * 放行窗口过期后风控恢复计数，一旦某窗口内累计到阈值（如 60 秒内 10 次写操作），
+ * 后续每次请求都会命中阈值 —— 用户即使输对了 PIN，重发的请求仍会再触发一次 8303，
+ * 形成「输 PIN 也过不去」的死循环。验证通过即代表身份已确认，计数理应归零。
+ *
+ * 由守卫内部的验证成功分支与 `SecurityController.verifyPin` 共同调用
+ * （后者是前端 PIN 弹窗的正常路径，不经过守卫的分支 1/2）。
+ */
+function markVerified(userId) {
+  verifiedMap.set(userId, { verifiedAt: Date.now(), count: 0 });
+  freqMap.delete(userId);
+  sensitiveMap.delete(userId);
+}
+
+/**
+ * 确保该用户存在一条待验证记录（并发时避免重复插入）。
+ * 风控超限与「请求过多」两处原本各自复制了一份相同逻辑，此处收敛为一处。
+ */
+async function ensurePendingRecord(userId, url, method) {
+  const [pending] = await db.execute(
+    `SELECT id FROM security_verify_log
+     WHERE user_id = ? AND pin_status = 0 AND action_type <> 'route_verify' LIMIT 1`,
+    [userId]
+  );
+  if (pending.length === 0) {
+    await insertRecord(userId, url, method);
+  }
+}
+
+/**
+ * observe 模式下记录「本应拦截」的事件（不拦截，只留痕供灰度分析）
+ * 统计方式：在日志中检索 `[pinSecurityGuard][observe]`
+ */
+function logRiskSuppressed(reason, userId, method, url, detail = "") {
+  console.warn(
+    `[pinSecurityGuard][observe] 风控超限但未拦截（${reason}）: ` +
+      `user=${userId} ${method} ${url}${detail ? ` ${detail}` : ""}`
   );
 }
 
@@ -320,6 +441,13 @@ const pinSecurityGuard = async (req, res, next) => {
   // 小程序端暂时跳过设备验证
   // if (req.xcxBypass) return next();
 
+  /**
+   * 是否已确认「该请求所属用户设置了 PIN」。
+   * 用于 catch 块做 fail-closed 判定：只有在守卫确实对本次请求有约束力时才拒绝。
+   * 未登录 / 未设置 PIN 的用户守卫本就放行，出错时不应连带拒绝（否则一个 DB 抖动会锁死整个应用）。
+   */
+  let pinProtected = false;
+
   try {
     const url = req.originalUrl || req.path;
     const method = req.method;
@@ -335,15 +463,22 @@ const pinSecurityGuard = async (req, res, next) => {
     // 注意：pinSecurityGuard 挂载在 /api/v1 路由之前，req.originalUrl 带 /api/v1 前缀，
     // 必须用 includes（不能 startsWith），否则 changePin/verifyPin 仍会被拦截导致退登。
     if (url.includes("/security/pin/")) return next();
+    // 静态资源显式跳过：/api/public 下的图片等不应计入频率窗口。
+    // 现状靠「<img> 带不了 Authorization ⇒ userId 为空」隐式跳过；一旦哪天改成
+    // axios blob 带 token 取图，每张图都会算进 freqMap（60 上限），
+    // /card/debit 一次加载 30 张卡即可误触发「请求过多，请重新验证」。
+    if (url.includes("/api/public/")) return next();
 
-    // 从 JWT Token 中提取 userId
+    // 从 JWT Token 中提取 userId（🔄 2026-10-12 双通道修复）
+    // P0-5 改造后 web 端只带 httpOnly Cookie、不再发 Bearer 头 ——
+    // 原实现只认 Bearer ⇒ web 登录用户在这里恒被判「未登录」直接放行，
+    // PIN 二次验证 / 频率风控 / 敏感操作风控对 web 全面失效。
+    // 现复用 authGuard 的 extractToken（Bearer 优先 → Cookie 回落），口径单一来源。
     let userId = null;
-    const authHeader = req.headers.authorization;
-
-    if (authHeader?.startsWith("Bearer ")) {
+    const authToken = extractAuthToken(req);
+    if (authToken) {
       try {
-        const token = authHeader.substring(7);
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(authToken, process.env.JWT_SECRET);
         userId = decoded.userId;
       } catch {}
     }
@@ -355,6 +490,9 @@ const pinSecurityGuard = async (req, res, next) => {
     // 关闭 PIN 后 pin_code 为空，即使 security_verify_log 残留锁定记录也不再拦截）
     const userPin = await getUserPin(userId);
     if (!userPin) return next();
+
+    // 走到这里说明：已登录 + 已设置 PIN ⇒ 守卫对本次请求有约束力，后续异常必须 fail-closed
+    pinProtected = true;
 
     // 查询用户最新一条 PIN 验证记录
     let latest = await getLatestRecord(userId);
@@ -383,17 +521,15 @@ const pinSecurityGuard = async (req, res, next) => {
       }
       // 正确 → 解锁
       await db.execute(`UPDATE security_verify_log SET pin_status = 1, remark = '系统已解锁' WHERE id = ?`, [latest.id]);
-      verifiedMap.set(userId, { verifiedAt: Date.now(), count: 0 });
+      markVerified(userId);
       return next();
     }
 
     // ── 分支 1.5：检查路由验证触发的软锁定（无时间限制，验证 PIN 后自动解除）──
     if (latest?.action_type === 'lock' && latest?.pin_status === 0) {
-      // 如果内存中已有验证通过记录（并发请求竞态），直接放行
-      const existingSession = verifiedMap.get(userId);
-      if (existingSession && (Date.now() - existingSession.verifiedAt < 30 * 1000)) {
-        return next();
-      }
+      // ⚠ 此处原本有一段「内存 verifiedMap 30 秒放行窗口命中就 next()」的短路，
+      // 它让「锁定后 30 秒内」的所有请求绕过软锁直接取到真实数据（锁形同虚设）。
+      // 已移除：软锁未解除时一律不放行。并发竞态由 lockSystem 侧 clearVerifiedSession 兜底。
       // 风险路由验证目标交给 pinLockGuard 处理，避免通用 8303 覆盖 route_verify 的 challengeId
       if (routeVerifyTarget) {
         return next();
@@ -423,9 +559,18 @@ const pinSecurityGuard = async (req, res, next) => {
     // ── 分支 2：待验证 / 验证失败 / 无记录 ──
     if (!latest || latest.pin_status === 0 || latest.pin_status === 2) {
 
+      // ⚠ 风险路由（全部 DELETE 及 import/sql、batch-delete）不在这里返回"通用 8303"：
+      // 通用 8303 不带 challengeId，前端会走普通验证流程 → verifyPin 把状态刷成 1（等于先"解锁系统"）→
+      // 重发删除请求才轮到 pinLockGuard 出 challenge ⇒ 用户被迫连输两次 PIN。
+      // 与分支 1.5 保持一致：直接放行给 pinLockGuard，由它出带 challengeId 的 8303，
+      // 保证"删一次只验一次、零容差"（token 是一次性的，下次删除必须重新验证）。
+      if (routeVerifyTarget) {
+        return next();
+      }
+
       // 并发竞态保护：如果内存中已有验证通过记录，直接放行
       const existingSession2 = verifiedMap.get(userId);
-      if (existingSession2 && (Date.now() - existingSession2.verifiedAt < 30 * 1000)) {
+      if (existingSession2 && Date.now() - existingSession2.verifiedAt < PASS_WINDOW_MS) {
         return next();
       }
 
@@ -439,12 +584,9 @@ const pinSecurityGuard = async (req, res, next) => {
         const valid = await verifyPin(userId, pin);
 
         if (valid) {
-          // PIN 正确 → 标记验证成功，设置 30 秒放行窗口
+          // PIN 正确 → 标记验证成功，设置 30 秒放行窗口并重置风控计数
           await markSuccess(userId);
-          verifiedMap.set(userId, {
-            verifiedAt: Date.now(),
-            count: 0,
-          });
+          markVerified(userId);
           return next();
         }
 
@@ -471,58 +613,65 @@ const pinSecurityGuard = async (req, res, next) => {
       if (url.includes("/security/pin/check")) return next();
 
       const now = Date.now();
-      let session = verifiedMap.get(userId);
-
-      // 内存中没有放行记录 → 设置记录并放行
-      if (!session) {
-        verifiedMap.set(userId, { verifiedAt: now, count: 1 });
-        return next();
-      }
-
-      // 已超过 30 秒放行窗口 → 重置计数（防止旧会话污染）
-      if (now - session.verifiedAt >= 30 * 1000) {
-        session.count = 0;
-        session.verifiedAt = now;
-      }
-
-      const diff = now - session.verifiedAt;
+      const session = verifiedMap.get(userId);
+      const inWindow = !!session && now - session.verifiedAt < PASS_WINDOW_MS;
 
       // 🟢 30 秒放行窗口内：累计请求次数，超限则重新验证
-      if (diff < 30 * 1000) {
+      if (inWindow) {
         session.count++;
 
-        // 30 秒内请求超过 60 次，强制重新验证
+        // 放行窗口内请求超过 FREQ_LIMIT，强制重新验证
         if (session.count >= CONFIG.FREQ_LIMIT) {
-          const [pending] = await db.execute(
-            `SELECT id FROM security_verify_log
-             WHERE user_id = ? AND pin_status = 0 AND action_type <> 'route_verify' LIMIT 1`,
-            [userId]
-          );
-          if (pending.length === 0) {
-            await insertRecord(userId, url, method);
+          if (RISK_MODE === "enforce") {
+            await ensurePendingRecord(userId, url, method);
+            verifiedMap.delete(userId);
+            return respond(res, CODE.NEED_VERIFY, "请求过多，请重新验证");
           }
-          verifiedMap.delete(userId);
-          return respond(res, CODE.NEED_VERIFY, "请求过多，请重新验证");
+          // observe：只留痕，保留放行会话继续计数（不删，便于持续观测）
+          logRiskSuppressed(
+            "freq-window",
+            userId,
+            method,
+            url,
+            `count=${session.count}/${CONFIG.FREQ_LIMIT}`
+          );
         }
 
         return next();
       }
 
-      // 🔴 超过 30 秒放行窗口：恢复风控检查
-      const freq = checkFrequency(userId);                          // 全局频率检查
-      const sensitive = SENSITIVE_METHODS.includes(method) && checkSensitive(userId);  // 敏感操作频率检查
+      // 🔴 放行窗口已过（或本就没有放行会话）：清除会话，回归风控检查
+      //
+      // ⚠ 历史缺陷（本次修复）：此处原本是「session.count = 0; session.verifiedAt = now;」
+      // 的续期写法 —— 续期后 diff 恒为 0，下面的 checkFrequency / checkSensitive
+      // 永远执行不到（等同死代码）；且请求间隔略大于 30 秒时 count 每次归零，
+      // 一次 PIN 验证后近乎无限期免验。
+      // 正确语义：放行窗口只对「刚验证完的这 30 秒」有效，窗口一过立即恢复风控。
+      if (session) verifiedMap.delete(userId);
+
+      // RISK_MODE=off 时完全不计数（连滑动窗口都不写入）
+      const riskOff = RISK_MODE === "off";
+      const freq = riskOff ? false : checkFrequency(userId);                // 全局频率检查
+      const sensitive = riskOff
+        ? false
+        : SENSITIVE_METHODS.includes(method) && checkSensitive(userId);      // 敏感操作频率检查
 
       if (freq || sensitive) {
-        // 频率超限，插入待验证记录，弹出 PIN 验证
-        const [pending] = await db.execute(
-          `SELECT id FROM security_verify_log
-           WHERE user_id = ? AND pin_status = 0 AND action_type <> 'route_verify' LIMIT 1`,
-          [userId]
-        );
-        if (pending.length === 0) {
-          await insertRecord(userId, url, method);
+        if (RISK_MODE === "enforce") {
+          // 频率超限，插入待验证记录，弹出 PIN 验证
+          await ensurePendingRecord(userId, url, method);
+          return respond(res, CODE.NEED_VERIFY, "触发安全验证");
         }
-        return respond(res, CODE.NEED_VERIFY, "触发安全验证");
+        // observe：只留痕，放行
+        logRiskSuppressed(
+          freq ? "freq" : "sensitive",
+          userId,
+          method,
+          url,
+          freq
+            ? `窗口 ${CONFIG.FREQ_WINDOW}s / 上限 ${CONFIG.FREQ_LIMIT}`
+            : `窗口 ${CONFIG.SENSITIVE_WINDOW}s / 上限 ${CONFIG.SENSITIVE_LIMIT}`
+        );
       }
 
       return next();
@@ -531,10 +680,29 @@ const pinSecurityGuard = async (req, res, next) => {
     // 兜底放行（理论上不会走到这里）
     next();
   } catch (err) {
-    console.error(err);
-    // 出错时放行，避免阻塞正常业务
+    console.error("[pinSecurityGuard] 守卫异常:", err);
+
+    // ── fail-closed ──
+    // 历史实现是「出错直接 next()」。攻击者只要能诱发守卫内部异常（畸形 JWT、
+    // 异常路径、DB 抖动等），即可让所有 PIN 保护的接口免二次验证 —— 二次验证形同虚设。
+    // 现在：仅当守卫确实对本次请求有约束力（已登录 + 已设置 PIN）时拒绝。
+    // 未登录 / 未设置 PIN 的用户守卫本就放行，出错时继续放行，
+    // 避免一次异常把整个应用对全部用户锁死。
+    if (pinProtected) {
+      return res.status(503).json({
+        status: 503,
+        message: "安全校验异常，请稍后重试",
+      });
+    }
     next();
   }
 };
 
-module.exports = { pinSecurityGuard, CODE, CONFIG };
+module.exports = {
+  pinSecurityGuard,
+  CODE,
+  CONFIG,
+  RISK_MODE,
+  clearVerifiedSession,
+  markVerified,
+};

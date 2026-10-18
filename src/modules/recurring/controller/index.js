@@ -1,5 +1,10 @@
 const RecurringExpense = require("../model");
 
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 class RecurringExpenseController {
   async list(req, res) {
     try {
@@ -13,7 +18,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "查询成功", data: rows });
     } catch (error) {
       console.error("获取固定支出错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "查询失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -26,7 +31,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "查询成功", data });
     } catch (error) {
       console.error("获取固定支出统计错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "查询失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -54,7 +59,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "创建成功", data: row });
     } catch (error) {
       console.error("创建固定支出错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "创建失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("创建失败", error) });
     }
   }
 
@@ -82,7 +87,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "查询成功", data: decorated });
     } catch (error) {
       console.error("获取分期列表错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "查询失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -93,7 +98,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "查询成功", data: row });
     } catch (error) {
       console.error("获取固定支出详情错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "查询失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -118,7 +123,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "更新成功", data: row });
     } catch (error) {
       console.error("更新固定支出错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "更新失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("更新失败", error) });
     }
   }
 
@@ -129,7 +134,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "删除成功" });
     } catch (error) {
       console.error("删除固定支出错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "删除失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("删除失败", error) });
     }
   }
 
@@ -145,7 +150,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "更新成功", data: row });
     } catch (error) {
       console.error("更新固定支出月度状态错误:", error);
-      return res.status(500).json({ status: 500, message: error.message || "更新失败" });
+      return res.status(500).json({ status: 500, ...buildErrorBody("更新失败", error) });
     }
   }
 
@@ -160,7 +165,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "入账成功", data: result });
     } catch (error) {
       console.error("分期入账错误:", error);
-      return res.status(400).json({ status: 400, message: error.message || "入账失败" });
+      return res.status(400).json({ status: 400, ...buildErrorBody("入账失败", error) });
     }
   }
 
@@ -174,7 +179,7 @@ class RecurringExpenseController {
       return res.json({ status: 200, message: "中止完成", data: result });
     } catch (error) {
       console.error("分期中止错误:", error);
-      return res.status(400).json({ status: 400, message: error.message || "中止失败" });
+      return res.status(400).json({ status: 400, ...buildErrorBody("中止失败", error) });
     }
   }
 }

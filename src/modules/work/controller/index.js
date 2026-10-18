@@ -1,4 +1,9 @@
 const WorkJob = require("../model/job");
+// 🔒 P1-10（复审批量修复）：生产环境隐藏内部报错细节，统一走 buildErrorBody
+const {
+  buildErrorBody,
+} = require("../../../common/utils/logFields");
+
 const WorkSalary = require("../model/salary");
 
 /**
@@ -19,7 +24,7 @@ class WorkController {
       console.error("获取工作列表错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "查询失败" });
+        .json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -47,7 +52,7 @@ class WorkController {
         fund,
         tax_rate,
         remark,
-      } = req.body.data;
+      } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
 
       if (!job_type || !["formal", "parttime"].includes(job_type)) {
         return res.status(400).json({
@@ -82,7 +87,7 @@ class WorkController {
       console.error("创建工作错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "创建失败" });
+        .json({ status: 500, ...buildErrorBody("创建失败", error) });
     }
   }
 
@@ -110,7 +115,7 @@ class WorkController {
         fund,
         tax_rate,
         remark,
-      } = req.body.data;
+      } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       const existing = await WorkJob.findById(id, userId);
       if (!existing) {
@@ -142,7 +147,7 @@ class WorkController {
       console.error("更新工作错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "更新失败" });
+        .json({ status: 500, ...buildErrorBody("更新失败", error) });
     }
   }
 
@@ -163,7 +168,7 @@ class WorkController {
       console.error("删除工作错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "删除失败" });
+        .json({ status: 500, ...buildErrorBody("删除失败", error) });
     }
   }
 
@@ -200,7 +205,7 @@ class WorkController {
       console.error("获取日工资错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "查询失败" });
+        .json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -212,7 +217,7 @@ class WorkController {
     try {
       const userId = req.userId;
       const { job_id, work_date, work_hours, cut, subsidy, status, remark } =
-        req.body.data;
+        req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
 
       if (!job_id) {
         return res.status(400).json({ status: 400, message: "job_id 必填" });
@@ -234,15 +239,26 @@ class WorkController {
         remark,
       });
 
-      // 保存成功后，静默补充本月缺失的正式工日薪数据（当月1日 ~ 插入日期）
-      WorkSalary.fillMissingFormalSalary(userId, work_date);
+      // 保存成功后，补充本月缺失的正式工日薪数据（当月1日 ~ 插入日期）
+      // 🔄 2026-10-13（api.md P2-11）：原实现未 await 且无 catch ——
+      //    浮空 Promise，失败即 unhandled rejection（Node 15+ 默认进程级告警/可致命），
+      //    且进程退出前可能没跑完（补充静默丢失）。改为 await + try/catch：
+      //    等补充完成（数据一致性），失败仅告警不阻断保存响应（保持"静默补充"语义）。
+      try {
+        await WorkSalary.fillMissingFormalSalary(userId, work_date);
+      } catch (fillErr) {
+        console.warn(
+          `[work] 正式工日薪补充失败（不阻断保存）: user=${userId} date=${work_date}`,
+          fillErr?.message
+        );
+      }
 
       return res.json({ status: 200, message: "保存成功", data: result });
     } catch (error) {
       console.error("保存日工资错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "保存失败" });
+        .json({ status: 500, ...buildErrorBody("保存失败", error) });
     }
   }
 
@@ -270,7 +286,7 @@ class WorkController {
       console.error("获取月工资错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "查询失败" });
+        .json({ status: 500, ...buildErrorBody("查询失败", error) });
     }
   }
 
@@ -280,7 +296,7 @@ class WorkController {
   async deleteDaySalary(req, res) {
     try {
       const userId = req.userId;
-      const { work_date } = req.body.data;
+      const { work_date } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）
       if (!work_date) {
         return res.status(400).json({ status: 400, message: "work_date 必填" });
       }
@@ -291,7 +307,7 @@ class WorkController {
       console.error("删除日工资错误:", error);
       return res
         .status(500)
-        .json({ status: 500, message: error.message || "删除失败" });
+        .json({ status: 500, ...buildErrorBody("删除失败", error) });
     }
   }
 }
