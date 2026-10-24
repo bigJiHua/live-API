@@ -625,8 +625,8 @@ func Edit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	b := resp.Parse(r)
 
-	remark := b.Raw["remark"]
-	tags := b.Raw["tags"]
+	remark := b.DataOrRaw()["remark"] // 🔄 P2-12 同模式：双路径兼容明文/加密请求
+	tags := b.DataOrRaw()["tags"]
 
 	remarkStr := toStr(remark)
 	tagsStr := ""
@@ -690,7 +690,7 @@ func BatchDelete(w http.ResponseWriter, r *http.Request) {
 	b := resp.Parse(r)
 
 	var ids []string
-	if arr, ok := b.Raw["ids"].([]any); ok {
+	if arr, ok := b.DataOrRaw()["ids"].([]any); ok { // 🔄 P2-12 同模式：双路径兼容明文/加密请求
 		for _, v := range arr {
 			ids = append(ids, toStr(v))
 		}
