@@ -84,7 +84,7 @@ describe('P1-15 正常采集', () => {
   });
 });
 
-describe('P1-15 防日志伪造：客户端 body 字段全部被忽略', () => {
+describe('P1-15 防日志伪造：除地点/运营商外，客户端 body 字段被忽略', () => {
   // 攻击者构造的 body：把所有可被伪造成审计证据的字段都塞满
   const forged = {
     nameOrEmail: 'jihua',
@@ -147,6 +147,23 @@ describe('P1-15 防日志伪造：客户端 body 字段全部被忽略', () => {
     const f = buildServerSideLogFields(req, 42);
     expect(f.user_id).toBe(42);
     expect(f.user_id).not.toBe(999);
+  });
+
+  it('顶层 loginLocation/loginIsp 采信并落日志（2026-10-20 例外）', () => {
+    const req = makeReq({
+      body: { loginLocation: 'China-Zhejiang-Hangzhou', loginIsp: 'CMCC' },
+    });
+    const f = buildServerSideLogFields(req, 1);
+    expect(f.login_location).toBe('China-Zhejiang-Hangzhou');
+    expect(f.login_isp).toBe('CMCC');
+  });
+
+  it('snake_case 上报同样兼容，空占位落未知', () => {
+    const f = buildServerSideLogFields(makeReq({
+      body: { login_location: 'China-Guangdong-Shenzhen', login_isp: '--' },
+    }), 1);
+    expect(f.login_location).toBe('China-Guangdong-Shenzhen');
+    expect(f.login_isp).toBe('未知');
   });
 });
 

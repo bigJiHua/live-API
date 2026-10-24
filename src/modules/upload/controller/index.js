@@ -825,7 +825,7 @@ class UploadController {
   edit = async (req, res) => {
     try {
       const { id } = req.params;
-      const { remark, tags } = req.body;
+      const { remark, tags } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
 
       // 校验 remark 长度
       if (remark && remark.length > UploadController.config.maxRemarkLength) {
@@ -880,7 +880,7 @@ class UploadController {
    */
   batchDelete = async (req, res) => {
     try {
-      const { ids } = req.body;
+      const { ids } = req.body.data || req.body; // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
       if (!ids || ids.length === 0) return res.say("请选择要删除的附件", 400);
 
       // 检查附件是否被 moment 引用

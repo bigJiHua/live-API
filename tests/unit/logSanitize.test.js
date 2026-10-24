@@ -128,12 +128,14 @@ describe('C·buildServerSideLogFields 采信服务端（P1-15 补漏）', () => 
     expect(f.browser_info).toBe('');
   });
 
-  it('**客户端伪造字段被完全忽略**（req.body 不参与）', () => {
+  it('body.data 里的伪造字段被完全忽略（顶层地点/运营商除外）', () => {
     const req = makeReq({
-      // 伪造的 body（历史实现会展开它）
+      // 伪造的业务 data（历史实现会展开它）
       body: {
-        login_ip: '1.2.3.4', fingerprint: 'VICTIM', path: '/admin',
-        user_agent: 'FakeUA', login_location: 'Mars',
+        data: {
+          login_ip: '1.2.3.4', fingerprint: 'VICTIM', path: '/admin',
+          user_agent: 'FakeUA', login_location: 'Mars',
+        },
       },
       security: { ip: '203.0.113.9', fingerprint: 'fp-real' },
     });
@@ -142,7 +144,23 @@ describe('C·buildServerSideLogFields 采信服务端（P1-15 补漏）', () => 
     expect(f.fingerprint).toBe('fp-real');
     expect(f.path).toBe('/api/v1/user/update-username');
     expect(f.user_agent).toBe('');        // 请求头没有 ⇒ 空，而不是 body 里的 FakeUA
+    expect(f.login_location).toBe('未知'); // data 内的 location 不采信
+  });
+
+  it('顶层 loginLocation/loginIsp 按负责人拍板采信（展示用）', () => {
+    const f = buildServerSideLogFields(makeReq({
+      body: { loginLocation: 'China-Zhejiang-Hangzhou', loginIsp: 'CMCC' },
+    }), 1);
+    expect(f.login_location).toBe('China-Zhejiang-Hangzhou');
+    expect(f.login_isp).toBe('CMCC');
+  });
+
+  it('地点/运营商的空值与占位值落未知', () => {
+    const f = buildServerSideLogFields(makeReq({
+      body: { loginLocation: '--', loginIsp: 'unknown' },
+    }), 1);
     expect(f.login_location).toBe('未知');
+    expect(f.login_isp).toBe('未知');
   });
 
   it('device/os/fingerprint 从安全头取值', () => {
