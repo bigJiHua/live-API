@@ -95,54 +95,59 @@ class CreditCore {
     const pointsRateWrite = Math.round(parseFloat(card.points_rate) || 1);
 
     for (const m of months) {
-      const existing = await CardBill.findByCardAndMonth(cardId, m.billMonth, executor);
-      if (existing) {
+      // 含软删行一起查：uk_user_card_month 不含 is_deleted，软删账单若不复活，
+      // 同卡同月重建必然撞唯一键 → 之后该月任何记账/还款都会回滚。
+      const existing = await CardBill.findByCardAndMonthIncludingDeleted(cardId, m.billMonth, executor);
+      const updateExisting = async (billId) => {
         await executor.execute(
           `UPDATE card_bill SET
-             bill_day = ?, repay_day = ?, points_rate = ?,
+             is_deleted = 0, bill_day = ?, repay_day = ?, points_rate = ?,
              credit_limit = ?, temp_limit = ?, used_limit = ?, avail_limit = ?, bill_amount = ?,
              repaid = ?, need_repay = ?, repay_status = ?, is_overdue = ?, overdue_days = ?,
              points = ?, min_repay = ?, bill_start_date = ?, bill_end_date = ?, update_time = ?
-           WHERE id = ? AND is_deleted = 0`,
+           WHERE id = ?`,
           [
             card.bill_day, card.repay_day, pointsRateWrite,
             m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
             m.repaid, m.needRepay, m.repayStatus, m.isOverdue ? 1 : 0, m.overdueDays,
-            m.points, m.minRepay, m.billStartDate, m.billEndDate, now, existing.id
+            m.points, m.minRepay, m.billStartDate, m.billEndDate, now, billId
           ]
         );
-        snapshots.push({ billMonth: m.billMonth, billId: existing.id, ...m.core });
-      } else {
-        const id = idUtils.billId();
-        try {
-          await executor.execute(
-            `INSERT INTO card_bill
-               (id, user_id, card_id, bill_month, bill_day, repay_day, credit_limit, temp_limit,
-                used_limit, avail_limit, bill_amount, repaid, need_repay, repay_status,
-                is_overdue, overdue_days, points, points_rate, min_repay, bill_start_date, bill_end_date,
-                remind_switch, remind_days, create_time, update_time, is_deleted)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 3, ?, ?, 0)`,
-            [
-              id, userId, cardId, m.billMonth, card.bill_day, card.repay_day,
-              m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
-              m.repaid, m.needRepay, m.repayStatus, m.isOverdue ? 1 : 0, m.overdueDays,
-              m.points, pointsRateWrite, m.minRepay, m.billStartDate, m.billEndDate, now, now
-            ]
-          );
-        } catch (e) {
-          // 🔄 2026-10-13（api.md P3-9）：并发重建同卡同月账单时唯一键冲突（ER_DUP_ENTRY）
-          //    不再 500 —— 说明已存在（另一并发刚建），按已存在处理。
-          if (e.code === "ER_DUP_ENTRY") {
-            const existingRetry = await CardBill.findByCardAndMonth(cardId, m.billMonth, executor);
-            if (existingRetry) {
-              snapshots.push({ billMonth: m.billMonth, billId: existingRetry.id, ...m.core });
-              continue;
-            }
-          }
-          throw e;
-        }
-        snapshots.push({ billMonth: m.billMonth, billId: id, ...m.core });
+        snapshots.push({ billMonth: m.billMonth, billId, ...m.core });
+      };
+      if (existing) {
+        await updateExisting(existing.id);
+        continue;
       }
+      const id = idUtils.billId();
+      try {
+        await executor.execute(
+          `INSERT INTO card_bill
+             (id, user_id, card_id, bill_month, bill_day, repay_day, credit_limit, temp_limit,
+              used_limit, avail_limit, bill_amount, repaid, need_repay, repay_status,
+              is_overdue, overdue_days, points, points_rate, min_repay, bill_start_date, bill_end_date,
+              remind_switch, remind_days, create_time, update_time, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 3, ?, ?, 0)`,
+          [
+            id, userId, cardId, m.billMonth, card.bill_day, card.repay_day,
+            m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
+            m.repaid, m.needRepay, m.repayStatus, m.isOverdue ? 1 : 0, m.overdueDays,
+            m.points, pointsRateWrite, m.minRepay, m.billStartDate, m.billEndDate, now, now
+          ]
+        );
+      } catch (e) {
+        // 🔄 2026-10-13（api.md P3-9）：并发重建同卡同月账单时唯一键冲突（ER_DUP_ENTRY）
+        //    不再 500 —— 说明已存在（另一并发刚建），按已存在处理（含软删行复活）。
+        if (e.code === "ER_DUP_ENTRY") {
+          const existingRetry = await CardBill.findByCardAndMonthIncludingDeleted(cardId, m.billMonth, executor);
+          if (existingRetry) {
+            await updateExisting(existingRetry.id);
+            continue;
+          }
+        }
+        throw e;
+      }
+      snapshots.push({ billMonth: m.billMonth, billId: id, ...m.core });
     }
 
     return snapshots;

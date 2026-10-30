@@ -382,6 +382,21 @@ class CardBill {
   }
 
   /**
+   * 按卡片和月份查找账单（包含已软删行）。
+   * uk_user_card_month 不含 is_deleted：软删账单仍占用唯一键，重算时必须拿到它并复活，
+   * 否则同月重建会 ER_DUP_ENTRY，导致该卡该月后续记账/还款全部失败。
+   */
+  static async findByCardAndMonthIncludingDeleted(cardId, billMonth, executor = db) {
+    const query = `
+      SELECT * FROM ${this.tableName}
+      WHERE card_id = ? AND bill_month = ?
+      LIMIT 1
+    `;
+    const [rows] = await executor.execute(query, [cardId, billMonth]);
+    return rows[0] || null;
+  }
+
+  /**
    * 获取或创建账单（按需创建）
    */
   static async getOrCreateBill(cardId, userId, billMonth, executor = db) {

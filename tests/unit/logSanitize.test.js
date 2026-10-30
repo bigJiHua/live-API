@@ -72,6 +72,59 @@ describe('A·buildErrorBody 生产脱敏（P1-10）', () => {
   });
 });
 
+// ==================== A2. 业务异常透出 ====================
+describe('A2·buildErrorBody 业务异常保留原文案', () => {
+  it('生产环境：模型抛出的中文业务提示原样返回', () => {
+    setEnv('production');
+    const body = buildErrorBody('创建失败', new Error('余额不足，当前 100，需要 200'));
+    expect(body.message).toBe('余额不足，当前 100，需要 200');
+    expect(body).not.toHaveProperty('error');
+  });
+
+  it('生产环境：分期业务提示原样返回', () => {
+    setEnv('production');
+    expect(buildErrorBody('入账失败', new Error('该期已中止')).message).toBe('该期已中止');
+  });
+
+  it('即使 HTTP 语义是 500，业务异常也透出原因', () => {
+    setEnv('production');
+    expect(buildErrorBody('保存失败', new Error('该日期已添加10个事件，达到每日上限')).message)
+      .toBe('该日期已添加10个事件，达到每日上限');
+  });
+
+  it('带 code 的驱动错误仍按未知异常脱敏', () => {
+    setEnv('production');
+    const err = Object.assign(new Error('Unknown column 余额不足 的字段'), { code: 'ER_BAD_FIELD_ERROR' });
+    const body = buildErrorBody('创建失败', err);
+    expect(body.message).toBe('创建失败');
+    expect(JSON.stringify(body)).not.toContain('ER_BAD_FIELD_ERROR');
+  });
+
+  it('运行时错误（TypeError）按未知异常脱敏', () => {
+    setEnv('production');
+    expect(buildErrorBody('查询失败', new TypeError('Cannot read properties of undefined')).message)
+      .toBe('查询失败');
+  });
+
+  it('非中文文案（三方库/内部标记）按未知异常脱敏', () => {
+    setEnv('production');
+    expect(buildErrorBody('上传失败', new Error('Input file is missing')).message).toBe('上传失败');
+    expect(buildErrorBody('上传失败', new Error('MALFORMED_UTF8')).message).toBe('上传失败');
+  });
+
+  it('三方自定义错误类型（constructor !== Error）一律脱敏', () => {
+    setEnv('production');
+    class JwtLikeError extends Error {}
+    expect(buildErrorBody('登录失败', new JwtLikeError('该 token 无效')).message).toBe('登录失败');
+  });
+
+  it('超长/多行文案不透出', () => {
+    setEnv('production');
+    expect(buildErrorBody('操作失败', new Error('很长的业务提示'.repeat(30))).message).toBe('操作失败');
+    expect(buildErrorBody('操作失败', new Error('第一行\n第二行')).message).toBe('操作失败');
+  });
+});
+
 // ==================== B. 邮箱脱敏 ====================
 describe('B·maskEmail', () => {
   it('保留首字符与域名', () => {

@@ -713,7 +713,7 @@ class RecurringExpense {
     //     ② create 成功后写 entered + flowId —— 若这一步失败，
     //        补偿软删刚提交的流水并重算账单，再抛错（month_records 与账本一致，可安全重试）。
     const occupying = this.parseMonthRecords(row.month_records);
-    occupying[month] = { ...occupating[month], status: "entering", remark: "" };
+    occupying[month] = { ...occupying[month], status: "entering", remark: "" };
     await this.updateMonthRecords(id, userId, occupying);
 
     const flow = await CreditAccount.create({
@@ -865,17 +865,19 @@ class RecurringExpense {
    *  - 复用 enterInstallment（entered+remark 幂等防重复，entering 占坑态自愈重入），不改动 CreditCore；
    *  - 单期失败不影响整体（仅告警），保证列表/日历读取始终可用；
    *  - 已 entered/void 的期次会被 enterInstallment 自身拒绝，安全跳过。
+   * @returns {Promise<boolean>} 是否真的写入过（入账成功或占坑自愈）——
+   *   调用方据此决定是否重查快照，避免把入账前的旧状态原样返回给前端。
    */
   static async autoEnterPending(id, userId) {
     const row = await this.findById(id, userId);
-    if (!row || !row.repeat_count) return;
+    if (!row || !row.repeat_count) return false;
     const records = this.parseMonthRecords(row.month_records);
     // 纳入 pending + entering(无流水占坑，需自愈重入) 的期次
     const pendingMonths = Object.keys(records).filter((k) => {
       const s = records[k].status;
       return s === "pending" || (s === "entering" && !records[k].remark);
     });
-    if (!pendingMonths.length) return;
+    if (!pendingMonths.length) return false;
     // entering 自愈：无流水占坑 → 复位 pending。必须【先落库】再入账，
     // 否则入账成功后末尾再用内存旧 records 覆盖，会把 remark(流水ID) 抹掉，破坏防重复入账。
     let mutated = false;
@@ -894,11 +896,13 @@ class RecurringExpense {
       if (!this.canEnterNow(row, month, records)) continue; // 未到计划入账日（含未来期）→ 跳过；已超期 → 由 voidExpiredInstallments 作废
       // 已到达计划入账日 → 自动入账
       try {
-        await this.enterInstallment(id, month, userId);
+        const entered = await this.enterInstallment(id, month, userId);
+        if (entered && !entered.skipped) mutated = true;
       } catch (e) {
         console.warn(`[installment] 自动入账失败 id=${id} month=${month}:`, e.message);
       }
     }
+    return mutated;
   }
 
   /**

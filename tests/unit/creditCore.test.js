@@ -254,6 +254,22 @@ describe('syncCardBills 单卡基础计算', () => {
     expect(snaps[1].billAmount).toBe(500);
   });
 
+  test('软删账单复活：同卡同月不撞唯一键、不重复 INSERT，走 UPDATE 并清 is_deleted', async () => {
+    CardModel.findById.mockResolvedValue(makeCard());
+    registerCard({
+      expenses: [{ id: 'e1', amount: '2000', currency: 'CNY', exchange_rate: null, trans_date: `${CUR_MONTH}-05`, reversed_id: null }],
+      existingBills: [{ id: 'BILL_DELETED', bill_month: CUR_MONTH, is_deleted: 1 }],
+    });
+    registerWrites();
+    const snaps = await CreditCore.syncCardBills(CARD_A, USER);
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0].billId).toBe('BILL_DELETED');
+    const update = db.execute.mock.calls.find(([sql]) => sql.includes('UPDATE card_bill SET'));
+    expect(update).toBeTruthy();
+    expect(update[0]).toContain('is_deleted = 0');
+    expect(db.execute.mock.calls.some(([sql]) => sql.includes('INSERT INTO card_bill'))).toBe(false);
+  });
+
   test('既有账单残留月份：本期无流水 → 快照归零保留（不残留脏数据）', async () => {
     CardModel.findById.mockResolvedValue(makeCard());
     const m1 = monthsAgo(1);

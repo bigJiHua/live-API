@@ -87,7 +87,7 @@ class CardRepay {
     let repayId;
     try {
       await conn.beginTransaction();
-      repayId = await this.#execRepayTx(conn, params);
+      repayId = (await this.#execRepayTx(conn, params)).id;
       await conn.commit();
     } catch (e) {
       await conn.rollback();
@@ -128,7 +128,8 @@ class CardRepay {
    * 同一事务连接内完成：锁卡 → 扣来源款 → 写 card_repay → 账单重算。
    * @param {object} conn - 事务连接
    * @param {Object} params - 同 executeRepay 参数
-   * @returns {Promise<string>} repayId
+   * @returns {Promise<null|{id:string, amount:number}>} 实际还款记录与扣款金额；
+   *   mergeMode 下若账单已结清返回 null（调用方跳过）。amount 是锁内收敛后的真实扣款额。
    */
   static async #execRepayTx(conn, {
     userId,
@@ -307,7 +308,8 @@ class CardRepay {
     // 4. 同步更新信用卡账单（事务内，使用同一连接；共享池卡自动全池扩散）
     await CreditCore.syncCardBills(cardId, userId, conn);
 
-    return repayId;
+    // amount 返回锁内收敛后的真实扣款额（mergeMode 下可能小于入参快照金额）
+    return { id: repayId, amount: repayAmountNum };
   }
 
   /**
@@ -374,7 +376,7 @@ class CardRepay {
     try {
       await conn.beginTransaction();
       for (const d of debts) {
-        const rid = await this.#execRepayTx(conn, {
+        const done = await this.#execRepayTx(conn, {
           userId,
           cardId: d.cardId,
           billId: d.billId,
@@ -385,9 +387,10 @@ class CardRepay {
           remark: remark || `信报合一合并还款(${pool.bank_name || ''})`,
           mergeMode: true
         });
-        if (rid) {
-          repayIds.push(rid);
-          actualAmount += d.amount;
+        if (done) {
+          repayIds.push(done.id);
+          // 按锁内实际扣款额累计（并发收敛时可能小于快照 d.amount）
+          actualAmount += done.amount;
         }
       }
       await conn.commit();

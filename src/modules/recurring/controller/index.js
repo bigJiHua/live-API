@@ -71,16 +71,24 @@ class RecurringExpenseController {
       });
       // 系统自动入账：对处于账单周期内且未入账的期次自动触发（替代前端手动按钮）。
       // 失败仅告警，不影响后续列表读取。
+      let autoEntered = false;
       for (const row of rows) {
         try {
-          await RecurringExpense.autoEnterPending(row.id, userId);
+          if (await RecurringExpense.autoEnterPending(row.id, userId)) autoEntered = true;
         } catch (e) {
           console.warn(`[installments] 自动入账跳过 id=${row.id}:`, e.message);
         }
       }
+      // 入账/自愈会改写 month_records：必须重查快照，否则本次响应仍是入账前的旧状态，
+      // 前端会表现为「已到时间却没入账」，要再刷新一次才正常。
+      const latestRows = autoEntered
+        ? await RecurringExpense.findAll(userId, {
+            includeInactive: true, installmentOnly: true, excludeInstallment: false,
+          })
+        : rows;
       // 附加各期有效状态（已还判定：entered 期且账单已还清 -> done），只读不写
       const decorated = [];
-      for (const row of rows) {
+      for (const row of latestRows) {
         const next = { ...row, month_records: await RecurringExpense.decorateInstallmentStatus(row) };
         decorated.push(next);
       }
