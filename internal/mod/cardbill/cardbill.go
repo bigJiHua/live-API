@@ -554,6 +554,17 @@ func FindByCardAndMonth(ex db.Commiter, cardID, billMonth string) (map[string]an
     `, cardID, billMonth)
 }
 
+// FindByCardAndMonthIncludingDeleted 按卡片+月份查账单（包含已软删行）。
+// uk_user_card_month 不含 is_deleted：软删账单仍占用唯一键，重算时必须拿到它并复活，
+// 否则同月重建会撞 1062，导致该月账单一直缺失。
+func FindByCardAndMonthIncludingDeleted(ex db.Commiter, cardID, billMonth string) (map[string]any, error) {
+	return qRow(ex, `
+      SELECT * FROM card_bill
+      WHERE card_id = ? AND bill_month = ?
+      LIMIT 1
+    `, cardID, billMonth)
+}
+
 // GetOrCreateBill 对应 CardBill.getOrCreateBill(cardId, userId, billMonth, executor)。
 //
 // 🔧 SYNC-A40（2026-10-13）：补回 billMonth 入参（原 Go 契约为 (ex, cardID, userID)，

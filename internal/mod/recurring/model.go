@@ -1172,13 +1172,15 @@ func voidExpiredInstallments(row map[string]any) (bool, error) {
 }
 
 // autoEnterPending 系统自动入账：对已到达计划入账日且尚未入账(pending)的期次自动触发入账。
-func autoEnterPending(id, userID string) error {
+// 返回是否真的写入过（入账成功或占坑自愈）——调用方据此决定是否重查快照，
+// 避免把入账前的旧状态原样返回给前端。
+func autoEnterPending(id, userID string) (bool, error) {
 	row, err := findById(id, userID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if row == nil || !jsTruthy(row["repeat_count"]) {
-		return nil
+		return false, nil
 	}
 	records := parseMonthRecords(row["month_records"])
 	// 纳入 pending + entering(无流水占坑，需自愈重入) 的期次
@@ -1190,7 +1192,7 @@ func autoEnterPending(id, userID string) error {
 		}
 	}
 	if len(pendingMonths) == 0 {
-		return nil
+		return false, nil
 	}
 	// entering 自愈：无流水占坑 → 复位 pending。必须【先落库】再入账。
 	mutated := false
@@ -1204,7 +1206,7 @@ func autoEnterPending(id, userID string) error {
 	}
 	if mutated {
 		if err := updateMonthRecords(id, userID, records); err != nil {
-			return err
+			return false, err
 		}
 	}
 
@@ -1217,11 +1219,16 @@ func autoEnterPending(id, userID string) error {
 			continue // 未到计划入账日（含未来期）→ 跳过；已超期 → 由 voidExpiredInstallments 作废
 		}
 		// 已到达计划入账日 → 自动入账（单期失败仅告警，不影响整体）
-		if _, err := enterInstallment(id, month, userID); err != nil {
+		res, err := enterInstallment(id, month, userID)
+		if err != nil {
 			println("[installment] 自动入账失败 id=" + id + " month=" + month + ": " + err.Error())
+			continue
+		}
+		if !jsTruthy(res["skipped"]) {
+			mutated = true
 		}
 	}
-	return nil
+	return mutated, nil
 }
 
 // decorateInstallmentStatus 计算分期各期"有效状态"：entered 期若所属账单周期已还清(need_repay<=0)

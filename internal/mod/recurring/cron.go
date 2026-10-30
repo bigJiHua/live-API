@@ -146,7 +146,7 @@ func ScanOnce() ScanReport {
 				if dryRun {
 					report.Entered = append(report.Entered, map[string]any{"id": id, "months": willEnter, "dryRun": true})
 				} else {
-					if err := autoEnterPending(id, toStr(row["user_id"])); err != nil {
+					if _, err := autoEnterPending(id, toStr(row["user_id"])); err != nil {
 						report.Failed = append(report.Failed, map[string]any{"id": id, "reason": err.Error()})
 						return
 					}

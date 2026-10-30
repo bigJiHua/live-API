@@ -91,14 +91,29 @@ func Installments(w http.ResponseWriter, r *http.Request) {
 	}
 	// 系统自动入账：对处于账单周期内且未入账的期次自动触发（替代前端手动按钮）。
 	// 失败仅告警，不影响后续列表读取。
+	changed := false
 	for _, row := range rows {
-		if err := autoEnterPending(toStr(row["id"]), uid); err != nil {
+		ok, err := autoEnterPending(toStr(row["id"]), uid)
+		if err != nil {
 			println("[installments] 自动入账跳过 id=" + toStr(row["id"]) + ": " + err.Error())
+		}
+		if ok {
+			changed = true
+		}
+	}
+	// 入账/自愈会改写 month_records：必须重查快照，否则本次响应仍是入账前的旧状态，
+	// 前端会表现为「已到时间却没入账」，要再刷新一次才正常。
+	latestRows := rows
+	if changed {
+		latestRows, err = findAll(uid, FindOptions{IncludeInactive: true, InstallmentOnly: true, ExcludeInstallment: false})
+		if err != nil {
+			resp.SayErrBody(w, 500, "查询失败", err)
+			return
 		}
 	}
 	// 附加各期有效状态（已还判定：entered 期且账单已还清 -> done），只读不写
-	decorated := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
+	decorated := make([]map[string]any, 0, len(latestRows))
+	for _, row := range latestRows {
 		records, err := decorateInstallmentStatus(row)
 		if err != nil {
 			resp.SayErrBody(w, 500, "查询失败", err)

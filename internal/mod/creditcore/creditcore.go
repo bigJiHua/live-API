@@ -332,18 +332,20 @@ func syncOne(ex db.Commiter, cardID, userID string) error {
 	repayDay := toIntOrNil(card["repay_day"])
 
 	for _, m := range months {
-		existing, err := cardbill.FindByCardAndMonth(ex, cardID, m.billMonth)
+		// 含软删行一起查：软删账单仍占用 uk_user_card_month，若不复活，
+		// 同月重建必然撞 1062 → 该月账单永久缺失。
+		existing, err := cardbill.FindByCardAndMonthIncludingDeleted(ex, cardID, m.billMonth)
 		if err != nil {
 			return err
 		}
 		if existing != nil {
 			_, err = ex.Exec(
 				`UPDATE card_bill SET
-             bill_day = ?, repay_day = ?, points_rate = ?,
+             is_deleted = 0, bill_day = ?, repay_day = ?, points_rate = ?,
              credit_limit = ?, temp_limit = ?, used_limit = ?, avail_limit = ?, bill_amount = ?,
              repaid = ?, need_repay = ?, repay_status = ?, is_overdue = ?, overdue_days = ?,
              points = ?, min_repay = ?, bill_start_date = ?, bill_end_date = ?, update_time = ?
-           WHERE id = ? AND is_deleted = 0`,
+           WHERE id = ?`,
 				billDay, repayDay, pointsRateWrite,
 				m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
 				m.repaid, m.needRepay, m.repayStatus, boolToInt(m.isOverdue), m.overdueDays,
@@ -380,11 +382,11 @@ func syncOne(ex db.Commiter, cardID, userID string) error {
 				if errors.As(err, &myErr) && myErr.Number == 1062 {
 					if _, uerr := ex.Exec(
 						`UPDATE card_bill SET
-               bill_day = ?, repay_day = ?, points_rate = ?,
+               is_deleted = 0, bill_day = ?, repay_day = ?, points_rate = ?,
                credit_limit = ?, temp_limit = ?, used_limit = ?, avail_limit = ?, bill_amount = ?,
                repaid = ?, need_repay = ?, repay_status = ?, is_overdue = ?, overdue_days = ?,
                points = ?, min_repay = ?, bill_start_date = ?, bill_end_date = ?, update_time = ?
-             WHERE user_id = ? AND card_id = ? AND bill_month = ? AND is_deleted = 0`,
+             WHERE user_id = ? AND card_id = ? AND bill_month = ?`,
 						billDay, repayDay, pointsRateWrite,
 						m.creditLimit, m.tempLimit, m.usedLimit, m.availLimit, m.billAmount,
 						m.repaid, m.needRepay, m.repayStatus, boolToInt(m.isOverdue), m.overdueDays,
