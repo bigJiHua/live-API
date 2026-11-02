@@ -220,6 +220,13 @@ const apiRouter = require("./src/api");
 app.use("/api/v1", securityCheck, apiRouter); // 【已启用】
 app.use("/api/public", express.static(path.join(__dirname, "public"))); // 【已启用】
 
+// API 托管的公开分享页（SSR，零 JS）：根路径直达，与 /api/v1/share/diary/detail（GET）等价。
+// GET = token/密码模式页面；POST = 密码表单原生提交（不经过 securityCheck，无需安全头）。
+// 生产环境若有 nginx，需为 /share/diary/detail 配置转发到本服务的 location。
+const sharePage = require("./src/modules/share/controller/sharePage");
+app.get("/share/diary/detail", sharePage.view);
+app.post("/share/diary/detail", sharePage.submit);
+
 // --- 错误处理 ---
 const {
   errorHandler,

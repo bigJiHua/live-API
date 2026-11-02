@@ -204,6 +204,18 @@ async function handleShareAction(_req, res, { id, userId, action, duration }) {
         : current.visible_type || curVis;
     } catch { /* fallback */ }
 
+    // 分享页地址模式（SHARE_PAGE_MODE）：
+    // - web（默认）：链接指向 web 前端页面 ${FRONTEND_URL}/share/diary/detail（原行为不变）；
+    // - app：链接指向 API 托管的公开页（根路径 /share/diary/detail），域名取当前请求的
+    //   公网来源（trust proxy 生效时为反代还原的协议/域名），零配置。
+    //   注：来源取自请求头，分享者本人生成自己的链接，风险可控。
+    let shareUrl = `${process.env.FRONTEND_URL || ""}/share/diary/detail`;
+    if (String(process.env.SHARE_PAGE_MODE || "web").toLowerCase() === "app") {
+      const host = _req.get("x-forwarded-host") || _req.get("host") || "";
+      const proto = _req.protocol || "http";
+      shareUrl = host ? `${proto}://${host}/share/diary/detail` : "/share/diary/detail";
+    }
+
     // ── 开启分享 ──
     if (action === "open") {
       const newVs = curVis.vs === 0 ? 1 : curVis.vs + 1;
@@ -222,7 +234,6 @@ async function handleShareAction(_req, res, { id, userId, action, duration }) {
         visibleType: JSON.stringify(newVis),
       });
 
-      const shareUrl = `${process.env.FRONTEND_URL || ""}/share/diary/detail`;
       return res.json({
         status: 200,
         message: "分享已开启",
@@ -249,7 +260,6 @@ async function handleShareAction(_req, res, { id, userId, action, duration }) {
         expireHours,
       });
 
-      const shareUrl = `${process.env.FRONTEND_URL || ""}/share/diary/detail`;
       return res.json({
         status: 200,
         message: "Token 已生成",
