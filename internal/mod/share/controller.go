@@ -202,23 +202,25 @@ var pwDigitsRe = regexp.MustCompile(`^\d{6}$`)
 
 // VerifyPassword POST /share/password —— 密码模式公开查看。body: { id, pw }
 // from: modules/share/controller/index.js:115-199
+// 校验/防爆破逻辑抽在 verifyPasswordCore，SSR 分享页（page.go）复用同一份实现与 tracker。
 func VerifyPassword(w http.ResponseWriter, r *http.Request) {
 	b := resp.Parse(r)
-	id := b.Raw["id"]
-	pw := b.Raw["pw"]
+	resp.JSON(w, 200, verifyPasswordCore(b.Raw["id"], b.Raw["pw"]))
+}
 
+// verifyPasswordCore 对应 VerifyPassword 的完整校验/防爆破流程，返回应答 JSON 对象
+// （必含 status/message；成功时含 data）。密码模式防爆破与 JSON 接口共用同一 pwTracker。
+func verifyPasswordCore(id, pw any) map[string]any {
 	// 参数校验：!id || pw === undefined || pw === null || pw === ""
 	// 🔒 SYNC-A43：id 用 JS falsy 判定（Node 是 if (!id || ...)）⇒ id=0 应被拒。
 	// 旧实现 toStr(0)=="0" 非空 ⇒ 放行，多查一次库且返回 404 而非 400。
 	if !truthy(id) || pw == nil || toStr(pw) == "" {
-		resp.JSON(w, 200, map[string]any{"status": 400, "message": "参数不完整"})
-		return
+		return map[string]any{"status": 400, "message": "参数不完整"}
 	}
 
 	// pw 必须是 6 位数字
 	if !pwDigitsRe.MatchString(toStr(pw)) {
-		resp.JSON(w, 200, map[string]any{"status": 400, "message": "请输入 6 位数字密码"})
-		return
+		return map[string]any{"status": 400, "message": "请输入 6 位数字密码"}
 	}
 
 	// ── 防爆：速率限制（keep BUG-007：键 pw:${id}，不含 IP） ──
@@ -236,11 +238,10 @@ func VerifyPassword(w http.ResponseWriter, r *http.Request) {
 	if entry.lockedUntil != 0 && now < entry.lockedUntil {
 		remainSec := (entry.lockedUntil - now + 999) / 1000
 		pwMu.Unlock()
-		resp.JSON(w, 200, map[string]any{
+		return map[string]any{
 			"status": 429, "message": "尝试次数过多，请 " + strconv.FormatInt(remainSec, 10) + " 秒后再试",
 			"retryAfter": remainSec,
-		})
-		return
+		}
 	}
 	pwMu.Unlock()
 
@@ -258,20 +259,17 @@ func VerifyPassword(w http.ResponseWriter, r *http.Request) {
 	moment, err := findMomentById(toStr(id))
 	if err != nil {
 		fail()
-		resp.JSON(w, 200, map[string]any{"status": 500, "message": "验证失败"})
-		return
+		return map[string]any{"status": 500, "message": "验证失败"}
 	}
 	if moment == nil || truthy(moment["is_deleted"]) {
 		fail()
-		resp.JSON(w, 200, map[string]any{"status": 404, "message": "内容不存在或已删除"})
-		return
+		return map[string]any{"status": 404, "message": "内容不存在或已删除"}
 	}
 
 	vis := parseVis(moment)
 	if vis == nil || toF(vis["vt"]) != 1 {
 		fail()
-		resp.JSON(w, 200, map[string]any{"status": 403, "message": "分享已关闭或链接无效"})
-		return
+		return map[string]any{"status": 403, "message": "分享已关闭或链接无效"}
 	}
 
 	// 比对密码
@@ -285,16 +283,14 @@ func VerifyPassword(w http.ResponseWriter, r *http.Request) {
 		entryCount := entry.count
 		pwMu.Unlock()
 		if locked {
-			resp.JSON(w, 200, map[string]any{
+			return map[string]any{
 				"status": 429, "message": "密码错误次数过多，请 " + strconv.FormatInt(pwLimit.lockoutMs/1000, 10) + " 秒后再试",
 				"retryAfter": pwLimit.lockoutMs / 1000,
-			})
-			return
+			}
 		}
-		resp.JSON(w, 200, map[string]any{
+		return map[string]any{
 			"status": 403, "message": "密码错误，还剩 " + strconv.Itoa(pwLimit.maxAttempts-entryCount) + " 次机会",
-		})
-		return
+		}
 	}
 
 	// 验证通过 → 清除追踪记录
@@ -306,7 +302,7 @@ func VerifyPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	pwMu.Unlock()
 
-	resp.JSON(w, 200, buildResponse(moment))
+	return buildResponse(moment)
 }
 
 // ===== 助手 =====

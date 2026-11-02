@@ -40,6 +40,15 @@ func Add(name string, fn func(mux *http.ServeMux)) {
 	registrars = append(registrars, moduleRegistrar{name: name, fn: fn})
 }
 
+// rootRegistrars 根路径（/api/v1 之外）登记表，如 API 托管的公开分享页 /share/diary/detail。
+var rootRegistrars []moduleRegistrar
+
+// AddRoot 登记根路径路由（模块包 init() 中调用）；这些路由不经过 SecurityCheck
+// （Node app.js 的根路由同样挂在 /api/v1 之外），但仍在全局中间件链内。
+func AddRoot(name string, fn func(mux *http.ServeMux)) {
+	rootRegistrars = append(rootRegistrars, moduleRegistrar{name: name, fn: fn})
+}
+
 func sortedRegistrars() []moduleRegistrar {
 	out := make([]moduleRegistrar, len(registrars))
 	copy(out, registrars)
@@ -251,6 +260,10 @@ func NewMux() http.Handler {
 	apiMux.HandleFunc("/", NotFound)
 
 	root := http.NewServeMux()
+	// 根路径直达路由（如 SSR 分享页），先于 NotFound 兜底装配
+	for _, m := range rootRegistrars {
+		m.fn(root)
+	}
 	// /api/v1：securityCheck 全局 → 业务路由
 	root.Handle("/api/v1/", mw.SecurityCheck(apiMux))
 	// /api/public：静态资源（与 Node public 目录一致，相对 cwd）

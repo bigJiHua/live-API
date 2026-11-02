@@ -302,7 +302,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	// 分享相关 → 独立方法
 	if shareAction, ok := d["shareAction"].(string); ok &&
 		(shareAction == "open" || shareAction == "close" || shareAction == "token") {
-		handleShareAction(w, id, uid, shareAction, d["shareDuration"])
+		handleShareAction(w, r, id, uid, shareAction, d["shareDuration"])
 		return
 	}
 
@@ -338,7 +338,7 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleShareAction 分享开关（open/close/token）。from: controller/index.js:191-276
-func handleShareAction(w http.ResponseWriter, id, userID, action string, duration any) {
+func handleShareAction(w http.ResponseWriter, r *http.Request, id, userID, action string, duration any) {
 	// 权限校验
 	current, err := findById(db.DB(), id)
 	if err != nil {
@@ -353,7 +353,7 @@ func handleShareAction(w http.ResponseWriter, id, userID, action string, duratio
 	// 解析当前 visible_type（try/catch 兜底 {vt:0,vs:0,pw:0}）
 	curVis := parseShareVisible(current["visible_type"])
 
-	shareURL := config.Get("FRONTEND_URL", "") + "/share/diary/detail"
+	shareURL := sharePageURL(r)
 	expireHours := jsNumberOr(duration, 1)
 
 	switch action {
@@ -430,6 +430,33 @@ func parseShareVisible(v any) map[string]any {
 		}
 	}
 	return def
+}
+
+// sharePageURL 分享页地址模式（SHARE_PAGE_MODE，与 api/src moment controller 对齐）：
+//   - web（默认）：链接指向 web 前端页面 ${FRONTEND_URL}/share/diary/detail（原行为不变）；
+//   - app：链接指向 API 托管的公开页（根路径 /share/diary/detail），域名取当前请求的
+//     公网来源（反代时读 X-Forwarded-Host/Proto），零配置。
+//     注：来源取自请求头，分享者本人生成自己的链接，风险可控。
+func sharePageURL(r *http.Request) string {
+	if !strings.EqualFold(strings.TrimSpace(config.Get("SHARE_PAGE_MODE", "web")), "app") {
+		return config.Get("FRONTEND_URL", "") + "/share/diary/detail"
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	if host == "" {
+		return "/share/diary/detail"
+	}
+	return proto + "://" + host + "/share/diary/detail"
 }
 
 // ===== 分享 token（对应 common/utils/shareToken.js，AES-256-GCM，key=sha256(SECRET)） =====
