@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { createAiService } = require('../src/modules/ai/service');
 const { createAiRouter } = require('../src/modules/ai/api');
 const app = express();
-const env = { AI_MODE: 'mock', NODE_ENV: 'development' };
+const env = { AI_MODE: 'mock', NODE_ENV: 'development', AI_ALLOW_SESSION_SETTINGS: 'true', AI_SYNTHETIC_DATA: 'true' };
 const key = crypto.randomBytes(32);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '32kb' }));
@@ -30,6 +30,6 @@ app.use((_, res) => res.status(404).json({ status: 404, message: '模拟沙盒�
 const port = Number(process.env.AI_SANDBOX_PORT || 8866);
 const server = app.listen(port, '127.0.0.1', () => {
   console.log(`AI synthetic sandbox: http://127.0.0.1:${port}`);
-  console.log('No database, no external AI, no formal accounting writes.');
+  console.log('Synthetic data only. DeepSeek is called only after the user configures a Key. No formal accounting writes.');
 });
 server.on('error', error => { console.error(`Sandbox start failed: ${error.code}`); process.exitCode = 1; });

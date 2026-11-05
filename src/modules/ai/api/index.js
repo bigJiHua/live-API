@@ -8,9 +8,29 @@ function createAiRouter({ guard = authGuard, service = createAiService(), env = 
   const router = express.Router();
   const limits = new Map();
   const draftLimits = new Map();
+  const settingsLimits = new Map();
   router.use(guard);
   router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-  router.get('/capabilities', (_, res) => res.json({ status: 200, data: capabilities(env) }));
+  router.get('/capabilities', (req, res) => res.json({ status: 200, data: service.getCapabilities?.(req.userId) || capabilities(env) }));
+  router.get('/settings', (req, res) => res.json({ status: 200, data: service.getSettings(req.userId) }));
+  const settingsHandler = clear => async (req, res) => {
+    const now = clock();
+    for (const [id, entry] of settingsLimits) if (entry.until <= now && !entry.active) settingsLimits.delete(id);
+    const entry = settingsLimits.get(req.userId) || { until: now + 60000, count: 0, active: false };
+    if (entry.active || entry.count >= 5 || (!settingsLimits.has(req.userId) && settingsLimits.size >= 1000)) {
+      return res.status(429).json({ status: 429, code: 'AI_RATE_LIMIT', message: '连接设置操作过于频繁，请稍后重试' });
+    }
+    entry.count++; entry.active = true; settingsLimits.set(req.userId, entry);
+    try {
+      const data = clear ? service.clearSettings(req.userId) : await service.configure(req.userId, req.body?.data ?? req.body);
+      res.json({ status: 200, ismessage: true, data });
+    } catch (error) {
+      const safe = error instanceof AiError ? error : new AiError('连接设置失败，请重试', 500);
+      res.status(safe.status).json({ status: safe.status, code: safe.code, message: safe.message });
+    } finally { entry.active = false; }
+  };
+  router.put('/settings', settingsHandler(false));
+  router.delete('/settings', settingsHandler(true));
   router.post('/chat', async (req, res) => {
     const userId = req.userId;
     const now = clock();

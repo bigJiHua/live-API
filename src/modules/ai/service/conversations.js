@@ -17,6 +17,7 @@ function createConversationStore({ now = Date.now, ttl = 30 * 60 * 1000, maxEntr
     return record;
   }
   return {
+    clearUser(userId) { for (const [id, record] of records) if (record.userId === userId) records.delete(id); },
     open(userId, id) { return structuredClone(get(userId, id)); },
     append(userId, id, { message, answer, draft, trace }) {
       const record = get(userId, id);

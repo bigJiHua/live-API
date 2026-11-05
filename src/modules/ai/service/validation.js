@@ -16,7 +16,8 @@ const id = Joi.string().pattern(/^[\w-]{1,64}$/);
 const range = { startDate: date.required(), endDate: date.required() };
 const requestSchema = Joi.object({ message: Joi.string().trim().min(1).max(1500).required(),
   scene: Joi.string().valid('query', 'draft', 'chat').required(), consent: Joi.boolean().required(),
-  conversationId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
+  conversationId: Joi.string().guid({ version: 'uuidv4' }),
+  connectionId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
 const toolSchemas = Object.freeze({
   query_finance_summary: Joi.object(range).unknown(false),
   query_transactions: Joi.object({ ...range, categoryId: id,
