@@ -7,6 +7,7 @@ const { AiError } = require('../service/errors');
 function createAiRouter({ guard = authGuard, service = createAiService(), env = process.env, clock = Date.now } = {}) {
   const router = express.Router();
   const limits = new Map();
+  const draftLimits = new Map();
   router.use(guard);
   router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   router.get('/capabilities', (_, res) => res.json({ status: 200, data: capabilities(env) }));
@@ -33,7 +34,26 @@ function createAiRouter({ guard = authGuard, service = createAiService(), env = 
     try { res.json({ status: 200, data: service.getDraft(req.userId, req.params.id) }); }
     catch (_) { res.status(404).json({ status: 404, message: '草稿不存在或已过期' }); }
   });
-  // No commit/confirm/update/delete route exists in this test version.
+  const draftHandler = method => async (req, res) => {
+    const now = clock();
+    for (const [key, entry] of draftLimits) if (entry.until <= now) draftLimits.delete(key);
+    const entry = draftLimits.get(req.userId) || { until: now + 60000, count: 0 };
+    if (entry.count >= 30 || (!draftLimits.has(req.userId) && draftLimits.size >= 1000)) {
+      return res.status(429).json({ status: 429, code: 'AI_RATE_LIMIT', message: '草稿操作过于频繁，请稍后重试' });
+    }
+    entry.count++;
+    draftLimits.set(req.userId, entry);
+    try {
+      const draft = await service[method](req.userId, req.params.id, req.body?.data ?? req.body);
+      res.json({ status: 200, ismessage: true, data: draft });
+    } catch (error) {
+      const safe = error instanceof AiError ? error : new AiError('草稿操作失败', 500);
+      res.status(safe.status).json({ status: safe.status, code: safe.code, message: safe.message });
+    }
+  };
+  router.put('/drafts/:id', draftHandler('editDraft'));
+  router.post('/drafts/:id/action', draftHandler('actOnDraft'));
+  // Review/cancel only mutate isolated proposals. There is no formal commit endpoint.
   return router;
 }
 module.exports = createAiRouter();

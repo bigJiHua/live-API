@@ -22,6 +22,7 @@ const definitions = Object.freeze({
   }, ['direction', 'amount', 'currency', 'transDate', 'categoryId', 'accountId', 'payMethod', 'remark']),
 });
 function getTools(scene) {
+  if (scene === 'chat') return Object.values(definitions);
   return (scene === 'draft' ? ['list_record_choices', 'propose_transaction']
     : ['query_finance_summary', 'query_transactions']).map(name => definitions[name]);
 }
@@ -46,6 +47,6 @@ async function executeTool({ scene, userId, repository, today }, name, input) {
   if (!account) missingFields.push('账户');
   if (args.payMethod === null) missingFields.push('支付方式');
   return { ...args, categoryName: category?.name || null, accountName: account?.name || null,
-    missingFields, needsReview: true, formalWriteEnabled: false };
+    missingFields, choices, needsReview: true, formalWriteEnabled: false };
 }
 module.exports = { getTools, executeTool };

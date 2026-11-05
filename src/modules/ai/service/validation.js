@@ -15,7 +15,8 @@ const date = Joi.string().pattern(/^20\d{2}-\d{2}-\d{2}$/).custom((value, helper
 const id = Joi.string().pattern(/^[\w-]{1,64}$/);
 const range = { startDate: date.required(), endDate: date.required() };
 const requestSchema = Joi.object({ message: Joi.string().trim().min(1).max(1500).required(),
-  scene: Joi.string().valid('query', 'draft').required(), consent: Joi.boolean().required() }).unknown(false);
+  scene: Joi.string().valid('query', 'draft', 'chat').required(), consent: Joi.boolean().required(),
+  conversationId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
 const toolSchemas = Object.freeze({
   query_finance_summary: Joi.object(range).unknown(false),
   query_transactions: Joi.object({ ...range, categoryId: id,
@@ -45,4 +46,8 @@ function validateTool(name, input, today = todayShanghai()) {
   if (value.transDate && value.transDate > today) throw new AiError('暂不支持未来日期记账草稿');
   return value;
 }
-module.exports = { validate, requestSchema, validateTool, todayShanghai };
+const draftEditSchema = Joi.object({ version: Joi.number().integer().min(1).required(),
+  fields: toolSchemas.propose_transaction.required() }).unknown(false);
+const draftActionSchema = Joi.object({ version: Joi.number().integer().min(1).required(),
+  action: Joi.string().valid('review', 'discard').required() }).unknown(false);
+module.exports = { validate, requestSchema, validateTool, todayShanghai, draftEditSchema, draftActionSchema };

@@ -2,7 +2,7 @@
 
 > **更新日期**: 2026-10-18
 
-> **AI测试分支（2026-11-05）**：`feat/deepseek-ai-test`，与Web同名分支对齐。支持DeepSeek只读工具调用与独立草稿，默认关闭、无正式入账能力。详见 [AI模块与联调说明](src/modules/ai/README.md) 和 [变更/验证日志](logs/CHANGELOG_2026-11-05_AI.md)。
+> **AI测试分支（2026-11-05）**：`feat/deepseek-ai-test`，与Web同名分支对齐。支持DeepSeek连续聊天、只读工具调用和聊天内草稿修改/核对/取消，默认关闭、无正式入账能力。详见 [AI模块与联调说明](src/modules/ai/README.md) 和 [变更/验证日志](logs/CHANGELOG_2026-11-05_AI.md)。
 
 为 Golden Finance 移动端 PWA 应用提供 RESTful API 支持，涵盖用户认证、财务管理、银行卡、工资核算、理财投资、数据备份等完整功能。
 

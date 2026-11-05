@@ -17,11 +17,12 @@ function getConfig(env = process.env) {
 }
 
 function capabilities(env = process.env) {
-  const base = { contractVersion: 1, provider: 'deepseek', formalWriteEnabled: false };
+  const base = { contractVersion: 1, provider: 'deepseek', formalWriteEnabled: false,
+    chatEnabled: true, draftEditingEnabled: true };
   try {
     const { mode } = getConfig(env);
     return { ...base, enabled: mode !== 'disabled', mode, requiresConsent: mode === 'deepseek',
-      scenes: ['query', 'draft'], message: mode === 'disabled' ? '站点尚未启用 AI 测试' : '' };
+      scenes: ['query', 'draft', 'chat'], message: mode === 'disabled' ? '站点尚未启用 AI 测试' : '' };
   } catch (error) {
     return { ...base, enabled: false, mode: 'disabled', requiresConsent: false, scenes: [], message: error.message };
   }

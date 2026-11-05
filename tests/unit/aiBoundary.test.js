@@ -4,6 +4,7 @@ const { executeTool, getTools } = require('../../src/modules/ai/service/tools');
 const { validateTool, todayShanghai } = require('../../src/modules/ai/service/validation');
 const { createMockRepository } = require('../../src/modules/ai/service/mock');
 const { createDraftStore } = require('../../src/modules/ai/service/drafts');
+const { createConversationStore } = require('../../src/modules/ai/service/conversations');
 const { getConfig, capabilities } = require('../../src/modules/ai/service/config');
 
 const today = '2026-11-05';
@@ -115,7 +116,7 @@ describe('AI boundary: model output never grants authority', () => {
     expect(repository.summary).not.toHaveBeenCalled();
   });
   test('client cannot supply model history, identity, or a consent string', async () => {
-    for (const extra of [{ userId: 'b' }, { messages: [] }, { consent: 'true' }]) {
+    for (const extra of [{ userId: 'b' }, { messages: [] }, { history: [] }, { consent: 'true' }]) {
       await expect(service().run('a', { ...input, ...extra })).rejects.toThrow();
     }
   });
@@ -125,5 +126,83 @@ describe('AI boundary: model output never grants authority', () => {
       AI_DB_NAME: 'test', AI_DB_USER: 'readonly', AI_DB_PASSWORD: 'test' }, chat });
     await expect(s.run('a', input)).rejects.toMatchObject({ code: 'AI_CONSENT_REQUIRED' });
     expect(chat).not.toHaveBeenCalled();
+  });
+});
+
+describe('continuous chat and interactive draft isolation', () => {
+  const chatInput = { ...input, scene: 'chat' };
+  test('chat chooses query or draft without separate user modes', async () => {
+    const s = service();
+    const greeting = await s.run('a', { ...chatInput, message: '你好' });
+    expect(greeting.trace).toEqual([]);
+    const result = await s.run('a', { ...chatInput, conversationId: greeting.conversationId });
+    expect(result.conversationId).toBe(greeting.conversationId);
+    expect(result.draft.amount).toBe('32');
+    const query = await s.run('a', { ...chatInput, conversationId: result.conversationId, message: '查看本月明细' });
+    expect(query.trace[0].tool).toBe('query_transactions');
+    expect(getTools('chat')).toHaveLength(4);
+  });
+  test('history is server-owned, user-isolated, capped and expires', () => {
+    let clock = 1000;
+    const store = createConversationStore({ now: () => clock, ttl: 100 });
+    const conversation = store.open('a');
+    for (let i = 0; i < 7; i++) store.append('a', conversation.id, { message: `user ${i}`, answer: 'answer', trace: [] });
+    const copy = store.open('a', conversation.id);
+    expect(copy.history).toHaveLength(10);
+    copy.history[0].content = 'tampered';
+    expect(store.open('a', conversation.id).history[0].content).toBe('user 2');
+    expect(() => store.open('b', conversation.id)).toThrow();
+    clock = 1100;
+    expect(() => store.open('a', conversation.id)).toThrow();
+  });
+  test('model receives previous turns and current edited draft on follow-up', async () => {
+    const s = service();
+    const result = await s.run('a', chatInput);
+    const edited = await s.editDraft('a', result.draft.id, { version: 1, fields: { ...proposal, amount: '35', accountId: 'mock_cash' } });
+    expect(edited).toMatchObject({ version: 2, amount: '35', accountName: '模拟现金账户' });
+    const follow = await s.run('a', { ...chatInput, conversationId: result.conversationId, message: '刚才这笔草稿多少钱？' });
+    expect(follow.answer).toContain('35元');
+    await expect(s.run('b', { ...chatInput, conversationId: result.conversationId })).rejects.toMatchObject({ status: 404 });
+    const chat = jest.fn().mockResolvedValue({ role: 'assistant', content: 'hello' });
+    const custom = service({ chat });
+    const first = await custom.run('a', { ...chatInput, message: '你好' });
+    await custom.run('a', { ...chatInput, message: '继续', conversationId: first.conversationId });
+    expect(chat.mock.calls[1][0].filter(item => item.role === 'user').map(item => item.content)).toEqual(['你好', '继续']);
+  });
+  test('editing validates identity, fields, category direction, amount and future date', async () => {
+    const s = service();
+    const { draft } = await s.run('a', chatInput);
+    await expect(s.editDraft('b', draft.id, { version: 1, fields: proposal })).rejects.toMatchObject({ status: 404 });
+    for (const fields of [{ ...proposal, userId: 'b' }, { ...proposal, accountId: 'other' },
+      { ...proposal, categoryId: 'mock_salary' }, { ...proposal, amount: '-1' }, { ...proposal, transDate: '2026-11-06' }]) {
+      await expect(s.editDraft('a', draft.id, { version: 1, fields })).rejects.toThrow();
+    }
+    expect(s.getDraft('a', draft.id).version).toBe(1);
+  });
+  test('versions prevent stale updates, review stays isolated, discarded is terminal', async () => {
+    const s = service();
+    const { draft } = await s.run('a', chatInput);
+    const updated = await s.editDraft('a', draft.id, { version: 1, fields: proposal });
+    expect(updated.expiresAt).toBe(draft.expiresAt);
+    await expect(s.editDraft('a', draft.id, { version: 1, fields: proposal })).rejects.toMatchObject({ status: 409, code: 'AI_DRAFT_CONFLICT' });
+    const reviewed = s.actOnDraft('a', draft.id, { version: 2, action: 'review' });
+    expect(reviewed).toMatchObject({ status: 'reviewed', version: 3, formalWriteEnabled: false, needsReview: true });
+    expect(() => s.actOnDraft('b', draft.id, { version: 3, action: 'discard' })).toThrow();
+    expect(() => s.actOnDraft('a', draft.id, { version: 3, action: 'commit' })).toThrow();
+    const discarded = s.actOnDraft('a', draft.id, { version: 3, action: 'discard' });
+    expect(discarded.status).toBe('discarded');
+    await expect(s.editDraft('a', draft.id, { version: 4, fields: proposal })).rejects.toMatchObject({ code: 'AI_DRAFT_DISCARDED' });
+  });
+  test('incomplete draft cannot be reviewed and editing never extends expiry', async () => {
+    let clock = 1000;
+    const store = createDraftStore({ now: () => clock, ttl: 100 });
+    const s = service({ draftStore: store });
+    const { draft } = await s.run('a', { ...chatInput, message: '记账35元' });
+    expect(() => s.actOnDraft('a', draft.id, { version: 1, action: 'review' })).toThrow('补齐');
+    clock = 1099;
+    const edited = await s.editDraft('a', draft.id, { version: 1, fields: proposal });
+    expect(edited.expiresAt).toBe(1100);
+    clock = 1100;
+    await expect(s.editDraft('a', draft.id, { version: 2, fields: proposal })).rejects.toMatchObject({ status: 404 });
   });
 });

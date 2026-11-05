@@ -9,21 +9,26 @@ API 与 Web 均使用 `feat/deepseek-ai-test` 分支。此阶段验证工具调�
 | 方法 | 路径 | 输入/用途 |
 |---|---|---|
 | GET | `/capabilities` | `contractVersion=1`、模式、是否启用、是否需要数据外发同意、`formalWriteEnabled=false` |
-| POST | `/chat` | 业务体 `{message, scene: "query"或"draft", consent: boolean}`；Web 请求层包装为 AES 信封 |
+| POST | `/chat` | 业务体 `{message, scene: "chat", consent: boolean, conversationId?: UUID}`；Web 请求层包装为 AES 信封；兼容旧query/draft场景 |
 | GET | `/drafts/:id` | 仅允许草稿所属登录用户读取，过期与无权限均返回404 |
+| PUT | `/drafts/:id` | `{version, fields}`：在聊天卡片内修改完整草稿字段，重新校验账户、分类和金额 |
+| POST | `/drafts/:id/action` | `{version, action: "review"或"discard"}`：仅标记核对或取消，禁止正式入账 |
 
-`chat.data` 返回 `{contractVersion, mode, answer, source, formalWriteEnabled, trace, draft}`。`trace` 包含工具名称、`readOnly=true` 和服务端实际结果；Web 单独展示可信查询依据，模型文字仅作为解释。不能通过工具或任何确认路由执行正式写入。
+`chat.data` 返回 `{contractVersion, mode, answer, conversationId, source, formalWriteEnabled, trace, draft}`。能力声明还包括 `chatEnabled=true`、`draftEditingEnabled=true`，防止旧后端配新界面。`trace` 包含工具名称、`readOnly=true` 和服务端实际结果；Web 在聊天内展示查询依据和交互草稿卡片，模型文字仅作为解释。不能通过工具或任何确认路由执行正式写入。
 
 ## 工具与权限
 
 - 查询场景仅提供 `query_finance_summary`、`query_transactions`。
 - 草稿场景仅提供 `list_record_choices`、`propose_transaction`。
+- 连续聊天场景提供上述四个受控工具，由模型按自然语言选择，用户无需切换标签。
 - 用户身份只取 `req.userId`；模型参数不能包含用户身份、SQL、URL或额外字段。
 - 模型调用由后端按静态名称映射执行，不使用 `eval`、任意HTTP请求、动态模块加载或模型生成SQL。
 - 日期按真实日历及 `Asia/Shanghai` 校验，查询最多93天；明细最多20条，分页偏移最多100。
 - 每次最多4次工具执行，最多4轮模型请求；每个进程每用户每分钟6次，禁止同用户同时调用。多实例部署还需共享限流存储。
+- 草稿修改/核对/取消合计每用户每分钟最多30次，修改必须携带当前版本；冲突返回409，不静默覆盖。
 - 草稿仅允许单笔普通人民币收支。账户/分类必须属于当前用户且类别与方向匹配；歧义字段保留null。**这些校验不能证明金额符合真实交易，草稿始终需要人工核对。**
-- 草稿存在独立进程内存，15分钟过期、最多500条、服务重启清除。返回副本防止修改已存版本。不保存聊天历史，不写业务表；此版本不承诺跨进程或重启后的草稿访问。
+- 草稿存在独立进程内存，15分钟过期、最多500条、服务重启清除。编辑不延长过期时间。状态为pending/reviewed/discarded，核对不入账，取消后不可编辑。返回副本防止修改已存版本；此版本不承诺跨进程或重启后的草稿访问。
+- 连续对话同样保存在按用户隔离的进程内存：30分钟空闲过期、最多500个对话、只保留最近10条服务端生成的user/assistant消息和少量查询范围元数据，不保存全量明细。客户端只能传conversationId，不能上传模型history/messages或身份。追问读取当前已编辑草稿；过期/其他用户对话返回404。Web聊天仅存在页面内存，离开或刷新后清除，不写localStorage/sessionStorage。
 - 日志不记录DeepSeek密钥、用户原文、查询明细或供应商原始报错。
 
 ## 真实只读查询
@@ -40,7 +45,7 @@ API 与 Web 均使用 `feat/deepseek-ai-test` 分支。此阶段验证工具调�
 
 汇总口径v1：剔除所有标记为“转账”的流水、信用卡还款、已删除及冲正记录；外币按记录汇率的每100外币口径折算为人民币，逐笔四舍五入到分。**所有“转账”标签均排除，含现有对外转账标签；尚未统一既有页面全部报表口径，也未引入信用卡外币银行实际对账口径。** 这不是资产/负债/现金流报告。
 
-发送真实请求前，Web需勾选将本次输入和必要结果发送至DeepSeek，API再次检查 `consent===true`；未同意时不调用供应商或查询工具。只读身份不发送至模型；返回候选账户仅含别名、ID和类型，不含卡BIN/尾号/密码/令牌。模型能看到获准发送的汇总、相关明细及备注。
+发送真实请求前，Web需勾选将对话和必要结果发送至DeepSeek，API每轮检查 `consent===true`；未同意时不调用供应商或查询工具。只读身份不发送至模型；返回候选账户仅含别名、ID和类型，不含卡BIN/尾号/密码/令牌。模型能看到获准发送的短期聊天上下文、最近草稿状态、汇总、相关明细及备注。
 
 ## 无数据库联调
 
