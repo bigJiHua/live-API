@@ -10,7 +10,9 @@
     "test:unit": "jest tests/unit",
     "test:integration": "jest tests/integration",
     "test:coverage": "jest --coverage",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:ai": "jest tests/unit/aiBoundary.test.js tests/unit/aiReadRepository.test.js tests/unit/aiProviderBoundary.test.js tests/unit/accountIdentityBoundary.test.js tests/integration/aiContract.test.js --runInBand",
+    "ai:sandbox": "node tools/ai-sandbox.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

@@ -28,6 +28,7 @@ const fundRouter = require("../modules/fund/api");
 const recurringRouter = require("../modules/recurring/api");
 const geoRouter = require("../modules/geo/api");
 const shareRouter = require("../modules/share/api");
+const aiRouter = require("../modules/ai/api");
 
 // 注册子路由
 router.use("/auth", authRouter); // 认证模块
@@ -56,5 +57,7 @@ router.use("/fund", fundRouter); // 理财投资模块
 router.use("/recurring", recurringRouter); // 固定周期支出提醒
 router.use("/geo", geoRouter); // 地理位置代理（IP定位 / 逆地理编码）
 router.use("/share", shareRouter); // 分享公开查看（无需登录）
+
+router.use("/ai", aiRouter); // AI 测试：受控只读查询 + 独立草稿，无正式入账
 
 module.exports = router;

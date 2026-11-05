@@ -16,8 +16,8 @@ class DebitController {
   async create(req, res) {
     try {
       const transaction = await DebitAccount.create({
-        userId: req.userId,
         ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
+        userId: req.userId, // 身份只能来自鉴权结果，禁止请求字段覆盖
       });
 
       return res.status(200).json({
