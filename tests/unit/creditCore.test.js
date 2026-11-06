@@ -648,3 +648,109 @@ describe('守卫与别名', () => {
     expect(agg.cards).toEqual([]);
   });
 });
+
+describe('金额边界与39.91账单链路', () => {
+  const expense = (id, amount, month = CUR_MONTH, currency = 'CNY', rate = null) => ({
+    id, amount, currency, exchange_rate: rate, trans_date: `${month}-05`, reversed_id: null,
+  });
+  const insertedBills = () => db.execute.mock.calls
+    .filter(([sql]) => sql.includes('INSERT INTO card_bill')).map(([, params]) => params);
+
+  test.each([
+    ['人民币单笔39.91', ['39.9100']],
+    ['人民币18.34+21.57', ['18.3400', '21.5700']],
+  ])('%s：账单回执、写入参数和实时债务均保持39.91', async (_, amounts) => {
+    const card = makeCard({ credit_limit: '5000.0000' });
+    CardModel.findById.mockResolvedValue(card);
+    CardModel.findAll.mockResolvedValue([card]);
+    registerCard({ expenses: amounts.map((amount, index) => expense(`e${index}`, amount)) });
+
+    const snapshot = (await CreditCore.syncCardBills(CARD_A, USER))[0];
+    expect(snapshot).toMatchObject({ billAmount: 39.91, usedLimit: 39.91, needRepay: 39.91, availLimit: 4960.09 });
+    const writes = insertedBills();
+    expect(writes).toHaveLength(1);
+    expect(writes[0][10]).toBe(39.91); // bill_amount
+    expect(writes[0][12]).toBe(39.91); // need_repay
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate.totalDebt).toBe(39.91);
+    expect(aggregate.totalAvail).toBe(4960.09);
+    expect(aggregate.cards[0].debt).toBe(39.91);
+  });
+
+  test('外币39.91按每100外币=100人民币：折算后账单写入仍为39.91', async () => {
+    const card = makeCard({ credit_limit: '5000.0000' });
+    CardModel.findById.mockResolvedValue(card);
+    CardModel.findAll.mockResolvedValue([card]);
+    registerCard({ expenses: [expense('foreign', '39.9100', CUR_MONTH, 'USD', '100.0000')] });
+
+    const snapshot = (await CreditCore.syncCardBills(CARD_A, USER))[0];
+    expect(snapshot.billAmount).toBe(39.91);
+    expect(snapshot.needRepay).toBe(39.91);
+    expect(insertedBills()[0][10]).toBe(39.91);
+    expect(insertedBills()[0][12]).toBe(39.91);
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate.totalDebt).toBe(39.91);
+    expect(aggregate.totalAvail).toBe(4960.09);
+  });
+
+  test('跨账单月0.1+0.2：实时总债务不暴露二进制尾差，月账单分别保存原金额', async () => {
+    const card = makeCard({ credit_limit: '0.6000' });
+    const firstMonth = monthsAgo(2);
+    const secondMonth = monthsAgo(1);
+    CardModel.findById.mockResolvedValue(card);
+    CardModel.findAll.mockResolvedValue([card]);
+    registerCard({ expenses: [expense('e1', '0.1000', firstMonth), expense('e2', '0.2000', secondMonth)] });
+
+    await CreditCore.syncCardBills(CARD_A, USER);
+    const writes = insertedBills();
+    expect(writes).toHaveLength(2);
+    expect(writes.map(params => [params[3], params[10], params[12]])).toEqual([
+      [firstMonth, 0.1, 0.1], [secondMonth, 0.2, 0.2],
+    ]);
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate.totalDebt).toBe(0.3);
+    expect(aggregate.totalAvail).toBe(0.3);
+    expect(aggregate.cards[0].debt).toBe(0.3);
+    expect(aggregate.cards[0].avail).toBe(0.3);
+  });
+
+  test('多卡额度、临额与溢缴累加：所有返回金额保持最多四位且身份字段不变', async () => {
+    CardModel.findAll.mockResolvedValue([
+      makeCard({ credit_limit: '0.1000', temp_limit: '0.1000' }),
+      makeCard({ id: CARD_B, credit_limit: '0.2000', temp_limit: '0.2000' }),
+    ]);
+    registerCard({ expenses: [expense('a', '0.1000')], repays: [{ repay_amount: '0.2000', target_bill_month: CUR_MONTH }] });
+    registerCard({ cardId: CARD_B, expenses: [expense('b', '0.2000')], repays: [{ repay_amount: '0.4000', target_bill_month: CUR_MONTH }] });
+
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate).toMatchObject({ totalCreditLimit: 0.3, totalTempLimit: 0.3, totalDebt: 0, totalAvail: 0.9, totalOverflow: 0.3 });
+    expect(aggregate.cards).toEqual([
+      { cardId: CARD_A, alias: '测试卡', shared: false, creditLimit: 0.1, tempLimit: 0.1, debt: 0, avail: 0.3, overflow: 0.1 },
+      { cardId: CARD_B, alias: '测试卡', shared: false, creditLimit: 0.2, tempLimit: 0.2, debt: 0, avail: 0.6, overflow: 0.2 },
+    ]);
+  });
+
+  test('共享池0.3额度减0.1净债务：组与总可用都为0.2，池额度只计一次', async () => {
+    CardModel.findAll.mockResolvedValue([makeCard({ share_pool_id: POOL }), makeCard({ id: CARD_B, share_pool_id: POOL })]);
+    registerPool({ creditLimit: 0.3, net: 0.1, cards: [CARD_A, CARD_B] });
+
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate.totalCreditLimit).toBe(0.3);
+    expect(aggregate.totalDebt).toBe(0.1);
+    expect(aggregate.totalAvail).toBe(0.2);
+    expect(aggregate.cards).toHaveLength(1);
+    expect(aggregate.cards[0]).toMatchObject({ poolId: POOL, shared: true, debt: 0.1, avail: 0.2 });
+    expect(aggregate.cards[0].cards).toEqual([{ cardId: CARD_A, alias: '测试卡' }, { cardId: CARD_B, alias: '测试卡' }]);
+  });
+
+  test('共享池真实超四位派生金额按约定截断，不能以清噪声名义四舍五入', async () => {
+    CardModel.findAll.mockResolvedValue([makeCard({ share_pool_id: POOL })]);
+    registerPool({ creditLimit: 10, net: 1.2345999, cards: [CARD_A] });
+
+    const aggregate = await CreditCore.aggregate(USER);
+    expect(aggregate.totalDebt).toBe(1.2345);
+    expect(aggregate.totalAvail).toBe(8.7654);
+    expect(aggregate.cards[0].debt).toBe(1.2345);
+    expect(aggregate.cards[0].avail).toBe(8.7654);
+  });
+});

@@ -34,6 +34,7 @@
 const db = require('../../../common/config/db');
 const idUtils = require('../../../common/utils/idUtils');
 const { toCNY } = require('../../../common/utils/currency');
+const { truncateDecimal } = require('../../../common/utils/decimal');
 // 延迟加载，避免与 ../model 形成循环依赖（model/index.js 也 require 本类）
 const CardBill = require('../model/bill');
 const CreditPool = require('../model/pool');
@@ -262,13 +263,23 @@ class CreditCore {
       }
     }
 
+    // Keep the calculation policy intact; normalize only the returned money boundary.
+    // SQL decimals and cross-month sums can acquire binary tails after Number arithmetic.
+    const money = value => Number(truncateDecimal(value, 4));
     return {
-      totalCreditLimit,
-      totalTempLimit,
-      totalDebt,
-      totalAvail,
-      totalOverflow,
-      cards: out
+      totalCreditLimit: money(totalCreditLimit),
+      totalTempLimit: money(totalTempLimit),
+      totalDebt: money(totalDebt),
+      totalAvail: money(totalAvail),
+      totalOverflow: money(totalOverflow),
+      cards: out.map(group => ({
+        ...group,
+        creditLimit: money(group.creditLimit),
+        tempLimit: money(group.tempLimit),
+        debt: money(group.debt),
+        avail: money(group.avail),
+        overflow: money(group.overflow),
+      }))
     };
   }
 

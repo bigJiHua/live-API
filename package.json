@@ -10,7 +10,8 @@
     "test:unit": "jest tests/unit",
     "test:integration": "jest tests/integration",
     "test:coverage": "jest --coverage",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:money": "jest tests/unit/currencyPrecision.test.js tests/unit/creditCore.test.js tests/unit/foreignFullChain.test.js tests/unit/foreignRegisterController.test.js tests/unit/foreignReconcileController.test.js tests/unit/repayMergeController.test.js --runInBand --silent"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

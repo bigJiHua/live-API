@@ -1,6 +1,8 @@
 # Golden Finance API — 生活管理系统后端
 
-> **更新日期**: 2026-10-18
+> **更新日期**: 2026-11-06
+
+> **main 金额精度修复（2026-11-06）**：同步39.91被浮点截断成39.9099的修复，保留真实最多四位小数，修正信用汇总边界与Web全额还款填值。详见 [main金额修复同步日志](logs/CHANGELOG_2026-11-06_MONEY_PRECISION_MAIN.md)。
 
 为 Golden Finance 移动端 PWA 应用提供 RESTful API 支持，涵盖用户认证、财务管理、银行卡、工资核算、理财投资、数据备份等完整功能。
 
@@ -448,6 +450,7 @@ modules/{模块名}/
 
 | 日期 | 内容 |
 |------|------|
+| 2026-11-06 | [main金额精度修复同步：39.91显示/折算、信用汇总与还款填值](logs/CHANGELOG_2026-11-06_MONEY_PRECISION_MAIN.md) |
 | 2026-10-13 | 冗余接口清理：整组删除 `/bank`、`/bank-category`、`/resource`、`/database`，并删除 `/user/settings` 等零散接口（启用路由 192→165）；`/user/email/send-code` 补上 Joi validator。见 `src/api/index.js:50-52` 注释 |
 | 2026-10-12 | 修复 httpOnly Cookie 通道下 PIN 风控对 web **静默失效**（`pinSecurityGuard` 改认 Cookie 令牌，与 `extractToken` 双通道对齐） |
 | 2026-10-08 | P0-5：认证 token 改为 httpOnly Cookie（新增 `cookieParser.js`）；P1-18：`TRUST_PROXY_HOPS` 收敛 XFF 信任（见 `src/common/middleware/cookieParser.js`、`app.js:59-65`） |
