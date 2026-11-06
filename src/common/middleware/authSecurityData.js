@@ -29,7 +29,11 @@ const decryptWithSecurity = async (req, res, next) => {
     );
 
     if (rows.length === 0) {
-      return res.say("安全隧道未建立", 401);
+      // 🐛 2026-11-06（追加163）：这里原返回 401 —— 但「握手行不存在」不是会话失效：
+      //    指纹漂移/握手行缺失时 JWT 完全有效，401 会被 web 端「业务401也拦」
+      //    当成登录失效强制登出（当日 401 登出事故根因）。降为 400（与 KEY_ERR
+      //    同族的可恢复错误），客户端可重新握手自愈，不再清会话。
+      return res.say("安全隧道未建立，请重新握手", 400);
     }
     const device = rows[0];
 

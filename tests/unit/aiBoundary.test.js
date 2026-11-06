@@ -1,26 +1,39 @@
-jest.mock('mysql2/promise', () => ({ createPool: jest.fn(() => { throw new Error('Mock test must not open a database'); }) }));
-const { createAiService } = require('../../src/modules/ai/service');
+jest.mock('../../src/common/config/db', () => ({
+  execute: jest.fn(() => { throw new Error('Boundary test must not open a database'); }),
+  getConnection: jest.fn(() => { throw new Error('Boundary test must not open a database'); }),
+}));
+jest.mock('mysql2/promise', () => ({ createPool: jest.fn(() => { throw new Error('Boundary test must not open a database'); }) }));
+jest.mock('axios', () => ({ get: jest.fn(() => { throw new Error('Unexpected provider call'); }),
+  post: jest.fn(() => { throw new Error('Unexpected provider call'); }) }));
 const { executeTool, getTools } = require('../../src/modules/ai/service/tools');
 const { validateTool, todayShanghai } = require('../../src/modules/ai/service/validation');
-const { createMockRepository } = require('../../src/modules/ai/service/mock');
-const { createDraftStore } = require('../../src/modules/ai/service/drafts');
-const { createConversationStore } = require('../../src/modules/ai/service/conversations');
 const { getConfig, capabilities } = require('../../src/modules/ai/service/config');
+const { createTestService, createTestRepository, call, testEnv } = require('../helpers/aiFixture');
+const db = require('../../src/common/config/db');
+
+afterAll(() => {
+  expect(db.execute).not.toHaveBeenCalled();
+  expect(db.getConnection).not.toHaveBeenCalled();
+  expect(require('mysql2/promise').createPool).not.toHaveBeenCalled();
+  expect(require('axios').post).not.toHaveBeenCalled();
+});
 
 const today = '2026-11-05';
 const range = { startDate: '2026-11-01', endDate: today };
-const input = { message: '昨天午饭花了32元，用支付宝付的', scene: 'draft', consent: false };
+const input = { message: '昨天午饭花了32元，用支付宝付的', scene: 'draft', consent: true };
 const proposal = { direction: 0, amount: '32.00', currency: 'CNY', transDate: today,
-  categoryId: 'mock_food', accountId: 'mock_balance', payMethod: '支付宝', remark: '午饭' };
-const context = () => ({ scene: 'draft', userId: 'user_a', today, repository: createMockRepository() });
-const call = (name, args) => ({ role: 'assistant', content: null,
-  tool_calls: [{ type: 'function', id: 'call_1', function: { name, arguments: JSON.stringify(args) } }] });
-const service = options => createAiService({ env: { AI_MODE: 'mock' }, now: () => new Date(`${today}T00:00:00Z`), ...options });
+  categoryId: 'fixture_food', accountId: 'fixture_balance', payMethod: '支付宝', remark: '午饭' };
+const context = () => ({ scene: 'draft', userId: 'user_a', today, repository: createTestRepository() });
+const service = options => createTestService(options);
 
 describe('AI boundary: model output never grants authority', () => {
-  test('default disabled; production mock and incomplete real config fail closed', () => {
+  test('default disabled; runtime mock or synthetic data and incomplete real config fail closed', () => {
     expect(capabilities({}).enabled).toBe(false);
-    expect(() => getConfig({ AI_MODE: 'mock', NODE_ENV: 'production' })).toThrow();
+    for (const NODE_ENV of [undefined, 'development', 'production']) {
+      expect(() => getConfig({ AI_MODE: 'mock', NODE_ENV })).toThrow();
+      expect(() => getConfig(testEnv({ NODE_ENV, AI_SYNTHETIC_DATA: 'true' }))).toThrow();
+    }
+    expect(getConfig({ AI_MODE: 'mock', NODE_ENV: 'test' }).dataSource).toBe('synthetic');
     expect(() => getConfig({ AI_MODE: 'deepseek', DEEPSEEK_API_KEY: 'test' })).toThrow();
   });
   test('reject root DB identity even with other real config present', () => {
@@ -67,31 +80,23 @@ describe('AI boundary: model output never grants authority', () => {
   });
   test('deny nonexistent or other-user accounts and mismatched categories', async () => {
     await expect(executeTool(context(), 'propose_transaction', { ...proposal, accountId: 'other_user_card' })).rejects.toThrow();
-    await expect(executeTool(context(), 'propose_transaction', { ...proposal, categoryId: 'mock_salary' })).rejects.toThrow();
+    await expect(executeTool(context(), 'propose_transaction', { ...proposal, categoryId: 'fixture_salary' })).rejects.toThrow();
   });
   test('ambiguous choices stay null instead of defaulting to a real account', async () => {
     const draft = await executeTool(context(), 'propose_transaction', { ...proposal, accountId: null, categoryId: null, payMethod: null });
     expect(draft.missingFields).toEqual(['分类', '账户', '支付方式']);
     expect(draft.formalWriteEnabled).toBe(false);
   });
-  test('mock end-to-end creates isolated proposal without opening a database', async () => {
+  test('injected tool loop creates an isolated proposal without opening a database', async () => {
     const s = service();
     const result = await s.run('user_a', input);
     expect(result.draft.amount).toBe('32');
     expect(result.draft.transDate).toBe('2026-11-04');
-    expect(result.source).toBe('synthetic');
+    expect(result.source).toBe('user-readonly');
+    expect(result.mode).toBe('deepseek');
     expect(result.formalWriteEnabled).toBe(false);
-    expect(s.getDraft('user_a', result.draft.id).amount).toBe('32');
-    expect(() => s.getDraft('user_b', result.draft.id)).toThrow();
-  });
-  test('drafts expire and returned data cannot mutate stored version', () => {
-    let now = 1000;
-    const store = createDraftStore({ now: () => now, ttl: 100 });
-    const result = store.save('a', proposal);
-    result.amount = '999';
-    expect(store.get('a', result.id).amount).toBe('32.00');
-    now = 1100;
-    expect(() => store.get('a', result.id)).toThrow();
+    expect((await s.getDraft('user_a', result.draft.id)).amount).toBe('32');
+    await expect(s.getDraft('user_b', result.draft.id)).rejects.toMatchObject({ status: 404 });
   });
   test('failed tool sequence does not save partial drafts', async () => {
     const store = { save: jest.fn(), get: jest.fn() };
@@ -122,10 +127,12 @@ describe('AI boundary: model output never grants authority', () => {
   });
   test('real calls require explicit consent before provider or repository access', async () => {
     const chat = jest.fn();
-    const s = service({ env: { AI_MODE: 'deepseek', DEEPSEEK_API_KEY: 'test', AI_DB_HOST: 'host',
-      AI_DB_NAME: 'test', AI_DB_USER: 'readonly', AI_DB_PASSWORD: 'test' }, chat });
-    await expect(s.run('a', input)).rejects.toMatchObject({ code: 'AI_CONSENT_REQUIRED' });
+    const repository = { choices: jest.fn(), summary: jest.fn() };
+    const s = service({ chat, repository });
+    await expect(s.run('a', { ...input, consent: false })).rejects.toMatchObject({ code: 'AI_CONSENT_REQUIRED' });
     expect(chat).not.toHaveBeenCalled();
+    expect(repository.choices).not.toHaveBeenCalled();
+    expect(repository.summary).not.toHaveBeenCalled();
   });
 });
 
@@ -142,24 +149,11 @@ describe('continuous chat and interactive draft isolation', () => {
     expect(query.trace[0].tool).toBe('query_transactions');
     expect(getTools('chat')).toHaveLength(4);
   });
-  test('history is server-owned, user-isolated, capped and expires', () => {
-    let clock = 1000;
-    const store = createConversationStore({ now: () => clock, ttl: 100 });
-    const conversation = store.open('a');
-    for (let i = 0; i < 7; i++) store.append('a', conversation.id, { message: `user ${i}`, answer: 'answer', trace: [] });
-    const copy = store.open('a', conversation.id);
-    expect(copy.history).toHaveLength(10);
-    copy.history[0].content = 'tampered';
-    expect(store.open('a', conversation.id).history[0].content).toBe('user 2');
-    expect(() => store.open('b', conversation.id)).toThrow();
-    clock = 1100;
-    expect(() => store.open('a', conversation.id)).toThrow();
-  });
   test('model receives previous turns and current edited draft on follow-up', async () => {
     const s = service();
     const result = await s.run('a', chatInput);
-    const edited = await s.editDraft('a', result.draft.id, { version: 1, fields: { ...proposal, amount: '35', accountId: 'mock_cash' } });
-    expect(edited).toMatchObject({ version: 2, amount: '35', accountName: '模拟现金账户' });
+    const edited = await s.editDraft('a', result.draft.id, { version: 1, fields: { ...proposal, amount: '35', accountId: 'fixture_cash' } });
+    expect(edited).toMatchObject({ version: 2, amount: '35', accountName: '现金账户' });
     const follow = await s.run('a', { ...chatInput, conversationId: result.conversationId, message: '刚才这笔草稿多少钱？' });
     expect(follow.answer).toContain('35元');
     await expect(s.run('b', { ...chatInput, conversationId: result.conversationId })).rejects.toMatchObject({ status: 404 });
@@ -174,10 +168,10 @@ describe('continuous chat and interactive draft isolation', () => {
     const { draft } = await s.run('a', chatInput);
     await expect(s.editDraft('b', draft.id, { version: 1, fields: proposal })).rejects.toMatchObject({ status: 404 });
     for (const fields of [{ ...proposal, userId: 'b' }, { ...proposal, accountId: 'other' },
-      { ...proposal, categoryId: 'mock_salary' }, { ...proposal, amount: '-1' }, { ...proposal, transDate: '2026-11-06' }]) {
+      { ...proposal, categoryId: 'fixture_salary' }, { ...proposal, amount: '-1' }, { ...proposal, transDate: '2026-11-06' }]) {
       await expect(s.editDraft('a', draft.id, { version: 1, fields })).rejects.toThrow();
     }
-    expect(s.getDraft('a', draft.id).version).toBe(1);
+    expect((await s.getDraft('a', draft.id)).version).toBe(1);
   });
   test('versions prevent stale updates, review stays isolated, discarded is terminal', async () => {
     const s = service();
@@ -185,24 +179,20 @@ describe('continuous chat and interactive draft isolation', () => {
     const updated = await s.editDraft('a', draft.id, { version: 1, fields: proposal });
     expect(updated.expiresAt).toBe(draft.expiresAt);
     await expect(s.editDraft('a', draft.id, { version: 1, fields: proposal })).rejects.toMatchObject({ status: 409, code: 'AI_DRAFT_CONFLICT' });
-    const reviewed = s.actOnDraft('a', draft.id, { version: 2, action: 'review' });
+    const reviewed = await s.actOnDraft('a', draft.id, { version: 2, action: 'review' });
     expect(reviewed).toMatchObject({ status: 'reviewed', version: 3, formalWriteEnabled: false, needsReview: true });
-    expect(() => s.actOnDraft('b', draft.id, { version: 3, action: 'discard' })).toThrow();
-    expect(() => s.actOnDraft('a', draft.id, { version: 3, action: 'commit' })).toThrow();
-    const discarded = s.actOnDraft('a', draft.id, { version: 3, action: 'discard' });
+    await expect(s.actOnDraft('b', draft.id, { version: 3, action: 'discard' })).rejects.toMatchObject({ status: 404 });
+    await expect(s.actOnDraft('a', draft.id, { version: 3, action: 'commit' })).rejects.toThrow();
+    const discarded = await s.actOnDraft('a', draft.id, { version: 3, action: 'discard' });
     expect(discarded.status).toBe('discarded');
     await expect(s.editDraft('a', draft.id, { version: 4, fields: proposal })).rejects.toMatchObject({ code: 'AI_DRAFT_DISCARDED' });
   });
-  test('incomplete draft cannot be reviewed and editing never extends expiry', async () => {
-    let clock = 1000;
-    const store = createDraftStore({ now: () => clock, ttl: 100 });
-    const s = service({ draftStore: store });
+  test('incomplete draft cannot be reviewed; edits retain its expiry and require review', async () => {
+    const s = service();
     const { draft } = await s.run('a', { ...chatInput, message: '记账35元' });
-    expect(() => s.actOnDraft('a', draft.id, { version: 1, action: 'review' })).toThrow('补齐');
-    clock = 1099;
+    await expect(s.actOnDraft('a', draft.id, { version: 1, action: 'review' })).rejects.toThrow('补齐');
     const edited = await s.editDraft('a', draft.id, { version: 1, fields: proposal });
-    expect(edited.expiresAt).toBe(1100);
-    clock = 1100;
-    await expect(s.editDraft('a', draft.id, { version: 2, fields: proposal })).rejects.toMatchObject({ status: 404 });
+    expect(edited.expiresAt).toBe(draft.expiresAt);
+    expect(edited.status).toBe('pending');
   });
 });

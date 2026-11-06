@@ -42,7 +42,8 @@ function buildCookieOptions(maxAgeSec = DEFAULT_TOKEN_TTL_SEC) {
     // 生产走 HTTPS 时才加 secure；开发态是 http://localhost，加了浏览器就不带 Cookie 了
     secure: isProd,
     path: "/",
-    maxAge: maxAgeSec,
+    // Express 接收毫秒；HTTP Set-Cookie 的 Max-Age 再由 Express 转为秒。
+    maxAge: maxAgeSec * 1000,
   };
 }
 

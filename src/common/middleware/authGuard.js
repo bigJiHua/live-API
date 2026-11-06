@@ -33,51 +33,63 @@ const authGuard = async (req, res, next) => {
     const token = extractToken(req);
 
     if (!token) {
+      // TEMP PROBE 2026-11-06: 抓 Cookie 缺失根因（定位后移除）
+      console.warn("[auth-probe] no token", req.method, req.originalUrl, "cookieHeader=" + !!req.headers.cookie, "cookieNames=" + String(req.headers.cookie || "").split(";").map(v => v.trim().split("=")[0]).join(","), "authHeader=" + !!req.headers.authorization);
       return res.json({ status: 401, message: "未提供认证令牌" });
     }
 
+    // JWT 错误与数据库错误必须分开：只有凭证失效才返回 401。
+    let decoded;
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.userId = decoded.userId;
-
-      // 验证用户是否存在 + 密码变更吊销检查
-      let user;
-      try {
-        const [users] = await db.execute(
-          "SELECT id, password_changed_at FROM user_info WHERE id = ? AND is_deleted = 0",
-          [req.userId]
-        );
-        user = users[0];
-      } catch {
-        // password_changed_at 字段可能尚未迁移，回退到基础查询
-        const [users] = await db.execute(
-          "SELECT id FROM user_info WHERE id = ? AND is_deleted = 0",
-          [req.userId]
-        );
-        user = users[0];
-      }
-
-      if (!user) {
-        return res.json({ status: 401, message: "用户不存在" });
-      }
-
-      // 密码变更吊销：token.iat 早于密码变更时间 → 令牌已失效
-      // 字段不存在时 password_changed_at 为 undefined，安全跳过
-      const pwdChangedAt = user?.password_changed_at;
-      if (pwdChangedAt && decoded.iat) {
-        const iatMs = decoded.iat * 1000; // iat 是秒，转为毫秒
-        if (iatMs < pwdChangedAt) {
-          return res.json({ status: 401, message: "密码已变更，请重新登录" });
-        }
-      }
-
-      next();
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
       if (err.name === "TokenExpiredError") {
         return res.json({ status: 401, message: "令牌已过期" });
       }
       return res.json({ status: 401, message: "无效的认证令牌" });
     }
+    req.userId = decoded.userId;
+
+    // 验证用户是否存在 + 密码变更吊销检查
+    let user;
+    try {
+      try {
+        const [users] = await db.execute(
+          "SELECT id, password_changed_at FROM user_info WHERE id = ? AND is_deleted = 0",
+          [req.userId]
+        );
+        user = users[0];
+      } catch (error) {
+        // 仅兼容尚未迁移的这一个字段，超时/断连/其他缺列不得重复查询。
+        const missingPasswordColumn = error.code === "ER_BAD_FIELD_ERROR" &&
+          /Unknown column 'password_changed_at' in /i.test(error.sqlMessage || error.message || "");
+        if (!missingPasswordColumn) throw error;
+        const [users] = await db.execute(
+          "SELECT id FROM user_info WHERE id = ? AND is_deleted = 0",
+          [req.userId]
+        );
+        user = users[0];
+      }
+    } catch (error) {
+      console.error("[authGuard] user lookup failed", { code: error.code || "UNKNOWN" });
+      return res.status(503).json({ status: 503, message: "认证服务暂时不可用，请稍后重试" });
+    }
+
+    if (!user) {
+      return res.json({ status: 401, message: "用户不存在" });
+    }
+
+    // 密码变更吊销：token.iat 早于密码变更时间 → 令牌已失效
+    // 字段不存在时 password_changed_at 为 undefined，安全跳过
+    const pwdChangedAt = user?.password_changed_at;
+    if (pwdChangedAt && decoded.iat) {
+      const iatMs = decoded.iat * 1000; // iat 是秒，转为毫秒
+      if (iatMs < pwdChangedAt) {
+        return res.json({ status: 401, message: "密码已变更，请重新登录" });
+      }
+    }
+
+    next();
   } catch (error) {
     console.error("Auth Guard Error:", error);
     return res.json({ status: 500, message: "认证检查失败" });

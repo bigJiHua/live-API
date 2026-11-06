@@ -11,7 +11,7 @@
 ### live_V1.0.0.sql
 **完整的V1.0.0版本数据库表结构，只适配V1.0.0版本！**
 
-`live.sql` 共 **24 张表**：
+`live.sql` 共 **29 张表**：
 
 | 表名 | 说明 |
 |------|------|
@@ -20,14 +20,19 @@
 | `account` | 记账明细表 |
 | `account_balance` | 账户余额表 |
 | `account_transfer` | 转账记录表 |
+| `ai_conversation` | AI 会话元数据表 |
+| `ai_message` | AI 聊天消息与查询/识别依据表 |
 | `asset_register` | 资产登记表 |
 | `asset_snapshot` | 资产快照表 |
 | `budget` | 预算控制表 |
+| `bus_ai_draft` | AI 记账草稿与人工入账回执表 |
 | `bus_category` | 分类字典表 |
 | `bus_fund_history` | 理财净值历史表 |
 | `bus_recurring` | 周期性计划任务表 |
 | `card_base` | 卡片基础信息表 |
 | `card_bill` | 卡片额度账单表 |
+| `card_credit_pool` | 信用卡共享额度池表 |
+| `card_foreign_register` | 外币消费登记与对账表 |
 | `card_log` | 卡片操作日志表 |
 | `card_repay` | 信用卡还款记录表 |
 | `device_crypto` | 设备密钥表 |
@@ -46,7 +51,7 @@
 
 ## 表结构约定
 
-所有表结构以 `live.sql` 为准，统一规范：
+所有表结构以 `live.sql` 为准，业务表通用规范：
 
 - 主键 `id`：`varchar(50)`，通过 `nanoid` 生成业务 ID
 - 外键/关联字段：`varchar(50)`
@@ -56,6 +61,8 @@
 - 行格式：`ROW_FORMAT=DYNAMIC`（避免 utf8mb4 索引超限）
 
 详细建表语句请直接查看 `live.sql` 文件。
+
+AI 持久化表沿用当前实现的独立结构：草稿/会话主键为 `CHAR(36)` UUID，消息主键为自增 `BIGINT`；业务关联字段为 `VARCHAR(64)`，日期与审计时间使用 `DATE` / `DATETIME`，过期时间为毫秒 `BIGINT`，状态使用 `ENUM`、结构化证据使用 `JSON`。三表指定 `utf8mb4` 与 `ROW_FORMAT=DYNAMIC`，排序规则沿用 MySQL 的 utf8mb4 默认值。018 仅补齐建表迁移，不转换已存在表的列类型或排序规则。含 `JSON` 的 AI 表要求 MySQL 5.7.8+。
 
 ---
 
@@ -71,6 +78,8 @@
 | `004_alter_bus_recurring.sql` | bus_recurring 表补齐 `remind_days`/`remark`/`month_records`/`update_time`/`is_deleted` |
 | `005_alter_id_varchar50.sql` | 18 张表 id 字段统一从 varchar(32) 加长为 varchar(50) |
 | `006_alter_moment_visible_type.sql` | moment 表 `visible_type` tinyint(4)→varchar(255) JSON + `_migrations` 表补齐 ROW_FORMAT=DYNAMIC |
+| `007_alter_decimal_precision.sql` | account.amount 与 card_bill 的已用额度/账单/待还金额改为 decimal(14,4) |
+| `008_add_password_changed_at.sql` | user_info 新增密码修改时间戳并初始化，用于 Token 吊销 |
 | `009_credit_pool.sql` | card_base 补充 `share_pool_id` 列 + 新建 `card_credit_pool` 共享额度池表（信用卡重构补充结构） |
 | `010_card_bill_columns.sql` | card_bill 补充 `bill_day` / `repay_day` 冗余列（CreditCore.syncCardBills 写入所需） |
 | `011_card_foreign_register.sql` | 新建 `card_foreign_register` 外币消费登记/对账表（痛点4，此前仅靠运行时自愈，现改严格迁移） |
@@ -80,6 +89,7 @@
 | `015_card_repay_account_id_nullable.sql` | card_repay.account_id 允许 NULL（本卡还款） |
 | `016_credit_pool_credit_report_merged.sql` | card_credit_pool 新增 `credit_report_merged` 信报合一标记（开启后支持合并还款） |
 | `017_consolidated_20261018.sql` | 合并原 017/018/20261013：device_crypto.aes_key varchar(64)→varchar(191) + work_salary/bus_fund_history 唯一键（含自动清重）+ sys_attachment.file_hash |
+| `018_ai_persistence.sql` | 新建 bus_ai_draft / ai_conversation / ai_message，包含草稿版本、入账回执、查询与 OCR 溯源字段；不插入样例或正式账务数据 |
 
 > 以上迁移变更均已合入 `live.sql`，新环境直接导入 `live.sql` 即可。迁移脚本对已升级环境为幂等（重复执行自动跳过）。
 >
@@ -87,9 +97,23 @@
 > 原因是后两个文件名不符合 `001~017` 的连续编号，而迁移器只按文件名 `.sort()` 执行 —— 以后再新增 `019_` 会排到它们之前。
 > 合并后的 017 是新文件名，已执行过旧 017 的库会重跑一次；三条语句均幂等（MODIFY / 清重 DELETE / 已存在则跳过），无副作用。
 
+### AI 表升级（018）
+
+- 新环境的完整建库源为 `live.sql`，其中已包含三个 AI 表；这些定义位于字符集恢复语句之前。
+- 已有环境通过正常 API 启动初始化流程执行未登记的 `018_ai_persistence.sql`（默认增量模式，`INIT_SKIP` 不应开启）。`_migrations` 由迁移运行器在三条语句全部成功后登记。
+- 三条语句均为 `CREATE TABLE IF NOT EXISTS`：表已存在则保留结构和数据；中途失败后可以重跑。它不会修复同名表的缺列或结构差异，遇到此类情况应另写下一编号的增量脚本。
+- 018 只创建 AI 表，不改变正式流水、余额、信用卡账单，也不回填聊天或 OCR 样例。不要在已有库直接导入包含 `DROP TABLE` 的完整 `live.sql`。
+- 编号接在当前 017 之后，文件名区别于已合并删除的旧 `018_work_fund_unique_keys.sql`；旧迁移登记记录可继续保留。
+
+补齐过程与隔离验证见 [当日合并日志·迁移一节](../logs/CHANGELOG_2026-11-06.md)。
+
 ---
 
 ## 更新日志
+
+### 2026-11-06
+- 补齐 AI 草稿/会话/消息的 `018_ai_persistence.sql`，与完整建库定义一致。
+- 更新实际 29 张表清单，补充遗漏的 007/008 迁移说明及 AI 升级边界。
 
 ### 2026-06-30
 - 修正表列表，移除不存在的 `asset`/`app_config`/`login_log`，补充 `asset_register`/`asset_snapshot`/`account_balance`/`work_job`/`user_log`

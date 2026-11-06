@@ -88,8 +88,8 @@ class Card {
    * 自动初始化虚拟账户（如果不存在）
    */
   static async findAll(userId, filters = {}, executor) {
-    // 确保虚拟账户已初始化
-    await this.initVirtualCards(userId);
+    // 外部事务中的聚合只读取已有卡片，不能跳到公共池初始化虚拟账户。
+    if (!executor) await this.initVirtualCards(userId);
     // 🔄 2026-10-13（api.md P2-6）：executor 透传——aggregate 在事务内被调用时
     //    （AccountSettlement.validate → CreditCore.aggregate(user_id, conn)），
     //    查询必须走同一连接才能读到事务内未提交数据。不传时行为不变。

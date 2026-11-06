@@ -43,26 +43,9 @@ class CreditAccount {
    * 创建信用卡消费记录
    * 独立实现，仅处理信用卡消费（direction=0），含事务；账单一律交由 CreditCore.syncCardBills 全量重算
    */
-  static async create({ userId, direction, categoryId, payType, payMethod, amount, currency, exchangeRate, transDate, remark, cardId, transferGroupId }) {
+  static async create({ userId, direction, categoryId, payType, payMethod, amount, currency, exchangeRate, transDate, remark, cardId, transferGroupId }, executor = db) {
     const id = idUtils.billId();
     const now = String(Date.now());
-
-    // 从 card_base 获取真实的 card_type
-    let finalAccountType = '';
-    if (cardId) {
-      const [cardRows] = await db.execute(
-        'SELECT card_type FROM card_base WHERE id = ? AND is_deleted = 0',
-        [cardId]
-      );
-      if (cardRows[0]?.card_type) {
-        finalAccountType = cardRows[0].card_type;
-      }
-    }
-
-    // 信用卡模块拦截：仅处理信用卡
-    if (finalAccountType !== 'credit') {
-      throw new Error('信用卡接口仅支持信用卡流水，借记卡请使用 /account/debit');
-    }
     // 信用卡不能收入
     if (direction === 1) {
       throw new Error('信用卡不能登记收入，还款请使用储蓄卡');
@@ -83,18 +66,24 @@ class CreditAccount {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     `;
 
-    // 信用卡消费：事务内创建流水 + 同步账单额度
-    const conn = await db.getPool().getConnection();
+    // 外部事务由调用方负责提交；所有锁、校验和账单写入使用同一连接。
+    const ownsTransaction = executor === db;
+    const conn = ownsTransaction ? await db.getPool().getConnection() : executor;
+    let finalAccountType;
     try {
-      await conn.beginTransaction();
+      if (ownsTransaction) await conn.beginTransaction();
 
       // H9 审计：事务内行级锁（锁卡片；若属于共享池则锁池行），串行化并发消费。
       // 锁后再校验额度（读到的都是已提交的最新账本），避免两笔并发同时通过校验。
       const [lockedCard] = await conn.execute(
-        'SELECT id, share_pool_id FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
+        'SELECT id, card_type, share_pool_id FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
         [cardId, userId]
       );
       if (!lockedCard[0]) throw new Error('卡片不存在');
+      finalAccountType = lockedCard[0].card_type;
+      if (finalAccountType !== 'credit') {
+        throw new Error('信用卡接口仅支持信用卡流水，借记卡请使用 /account/debit');
+      }
       if (lockedCard[0].share_pool_id) {
         await conn.execute(
           'SELECT id FROM card_credit_pool WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
@@ -144,16 +133,31 @@ class CreditAccount {
       }, conn);
       // [CreditCore] 统一重算（账本全量重算，幂等）
       await CreditCore.syncCardBills(cardId, userId, conn);
-      await conn.commit();
+      if (ownsTransaction) await conn.commit();
     } catch (e) {
-      await conn.rollback();
+      if (ownsTransaction) await conn.rollback();
       throw e;
     } finally {
-      conn.release();
+      if (ownsTransaction) conn.release();
     }
 
+    const created = {
+      id, user_id: userId, direction, category_id: categoryId, pay_type: payType,
+      pay_method: payMethod, account_type: finalAccountType, amount,
+      currency: currency || 'CNY', exchange_rate: exchangeRate || 1,
+      trans_date: transDate || now.substring(0, 10), remark: remark || '',
+      card_id: cardId, create_time: now, update_time: now, is_deleted: 0,
+      transfer_group_id: transferGroupId || null,
+    };
+    // 未提交的外部事务不能从公共池读取流水，也不能提前生成资产快照。
+    if (!ownsTransaction) return created;
+
     // 信用卡余额快照同步（syncBalanceSnapshot 对信用卡会跳过，保留调用保持一致性）
-    await AccountSettlement.syncBalanceSnapshot(cardId, userId);
+    try {
+      await AccountSettlement.syncBalanceSnapshot(cardId, userId);
+    } catch (error) {
+      console.error('[信用卡] 已入账，余额快照同步失败:', error.message);
+    }
 
     // 系统自动检查并记录资产快照
     setImmediate(() => {
@@ -162,7 +166,12 @@ class CreditAccount {
       });
     });
 
-    return Account.findById(id, userId);
+    try {
+      return await Account.findById(id, userId) || created;
+    } catch (error) {
+      console.error('[信用卡] 已入账，流水读取失败:', error.message);
+      return created;
+    }
   }
 
   /**

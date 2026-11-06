@@ -181,6 +181,8 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// The image endpoint uses the normal encrypted JSON envelope; limit larger bodies to this path only.
+app.use('/api/v1/ai/ocr', express.json({ limit: '4mb' }));
 app.use(express.json()); // JSON 解析
 app.use(express.urlencoded({ extended: true })); // URL 编码解析
 // 封装统一应答方法 res.say('话',状态码)

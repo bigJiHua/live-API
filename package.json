@@ -11,8 +11,13 @@
     "test:integration": "jest tests/integration",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
-    "test:ai": "jest tests/unit/aiBoundary.test.js tests/unit/aiReadRepository.test.js tests/unit/aiProviderBoundary.test.js tests/unit/aiSettings.test.js tests/unit/accountIdentityBoundary.test.js tests/integration/aiContract.test.js --runInBand",
-    "ai:sandbox": "node tools/ai-sandbox.js"
+    "test:money": "jest tests/unit/currencyPrecision.test.js tests/unit/creditCore.test.js tests/unit/foreignFullChain.test.js tests/unit/foreignRegisterController.test.js tests/unit/foreignReconcileController.test.js tests/unit/repayMergeController.test.js tests/unit/aiCommitBoundary.test.js tests/unit/aiAccountExecutor.test.js --runInBand --silent",
+    "money:verify": "node tools/money-precision-verify.js",
+    "test:ai": "jest tests/unit/aiBoundary.test.js tests/unit/aiReadRepository.test.js tests/unit/aiProviderBoundary.test.js tests/unit/aiSettings.test.js tests/unit/aiCommitBoundary.test.js tests/unit/aiAccountExecutor.test.js tests/unit/aiConversationPersistence.test.js tests/unit/aiOcrBoundary.test.js tests/unit/aiOcrPersistence.test.js tests/unit/aiModelAccountResolution.test.js tests/unit/aiDraftPolicy.test.js tests/unit/aiSettingsTargetKey.test.js tests/unit/aiProviderTargetKey.test.js tests/unit/accountIdentityBoundary.test.js tests/integration/aiContract.test.js --runInBand",
+    "ai:real:verify": "node tools/ai-real-verify.js",
+    "ai:real:acceptance": "node tools/ai-real-acceptance.js",
+    "ai:real:ocr": "node tools/ai-real-ocr-acceptance.js",
+    "ai:real:server": "node tools/ai-real-server.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

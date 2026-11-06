@@ -18,6 +18,10 @@ const requestSchema = Joi.object({ message: Joi.string().trim().min(1).max(1500)
   scene: Joi.string().valid('query', 'draft', 'chat').required(), consent: Joi.boolean().required(),
   conversationId: Joi.string().guid({ version: 'uuidv4' }),
   connectionId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
+const ocrRequestSchema = Joi.object({ image: Joi.object({ dataUrl: Joi.string().max(2 * 1024 * 1024).required() }).unknown(false).required(),
+  message: Joi.string().trim().max(1500).allow('').default(''), consent: Joi.boolean().required(),
+  conversationId: Joi.string().guid({ version: 'uuidv4' }),
+  connectionId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
 const toolSchemas = Object.freeze({
   query_finance_summary: Joi.object(range).unknown(false),
   query_transactions: Joi.object({ ...range, categoryId: id,
@@ -51,4 +55,6 @@ const draftEditSchema = Joi.object({ version: Joi.number().integer().min(1).requ
   fields: toolSchemas.propose_transaction.required() }).unknown(false);
 const draftActionSchema = Joi.object({ version: Joi.number().integer().min(1).required(),
   action: Joi.string().valid('review', 'discard').required() }).unknown(false);
-module.exports = { validate, requestSchema, validateTool, todayShanghai, draftEditSchema, draftActionSchema };
+// 追加163：入账提交只收 ID+版本（铁律1：不收任何业务字段 ⇒ 不构成第二写入口）
+const commitSchema = Joi.object({ version: Joi.number().integer().min(1).required() }).unknown(false);
+module.exports = { validate, requestSchema, ocrRequestSchema, validateTool, todayShanghai, draftEditSchema, draftActionSchema, commitSchema };

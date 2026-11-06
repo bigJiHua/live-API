@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const { AiError } = require('./errors');
+const { isSupportedDraftCategory } = require('./draftPolicy');
 
 // Independent pool. Never import production writable pools or business models.
 function createReadRepository(dbConfig) {
@@ -48,7 +49,7 @@ function createReadRepository(dbConfig) {
         const filter = categoryId ? ' AND a.category_id = ?' : '';
         const params = [userId, startDate, endDate, ...(categoryId ? [categoryId] : [])];
         const totals = await select(`SELECT COUNT(*) AS count FROM account a WHERE ${valid}${filter}`, params);
-        const rows = await select(`SELECT a.trans_date AS date, a.direction, a.amount, a.currency,
+        const rows = await select(`SELECT DATE_FORMAT(a.trans_date, '%Y-%m-%d') AS date, a.direction, a.amount, a.currency,
           ${cny} AS amountCNY, COALESCE(c.name, '未分类') AS category, a.remark FROM account a
           LEFT JOIN bus_category c ON c.id = a.category_id AND c.user_id = a.user_id AND c.is_deleted = 0
           WHERE ${valid}${filter} ORDER BY a.trans_date DESC, a.id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
@@ -61,9 +62,9 @@ function createReadRepository(dbConfig) {
         const categories = await select(`SELECT id, name, type FROM bus_category
           WHERE user_id = ? AND is_deleted = 0 AND type IN ('income', 'expense') ORDER BY sort, id LIMIT 101`, [userId]);
         const accounts = await select(`SELECT id, COALESCE(NULLIF(alias, ''), '未命名账户') AS name,
-          card_type AS type FROM card_base WHERE user_id = ? AND is_deleted = 0 ORDER BY id LIMIT 101`, [userId]);
+          card_type AS type FROM card_base WHERE user_id = ? AND is_deleted = 0 AND status = '正常' ORDER BY id LIMIT 101`, [userId]);
         if (categories.length > 100 || accounts.length > 100) throw new AiError('账户或分类过多，请先使用手动记账');
-        return { categories, accounts };
+        return { categories: categories.filter(isSupportedDraftCategory), accounts };
       });
     },
     close: () => pool.end(),

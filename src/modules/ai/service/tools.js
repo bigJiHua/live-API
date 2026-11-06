@@ -1,5 +1,6 @@
 const { validateTool } = require('./validation');
 const { AiError } = require('./errors');
+const { isSupportedDraftCategory } = require('./draftPolicy');
 const date = { type: 'string', description: 'YYYY-MM-DD，按Asia/Shanghai解析，不能晚于今天' };
 const range = { startDate: date, endDate: date };
 function tool(name, description, properties, required) {
@@ -26,7 +27,7 @@ function getTools(scene) {
   return (scene === 'draft' ? ['list_record_choices', 'propose_transaction']
     : ['query_finance_summary', 'query_transactions']).map(name => definitions[name]);
 }
-async function executeTool({ scene, userId, repository, today }, name, input) {
+async function executeTool({ scene, userId, repository, today, origin, message = '', confirmedAccountId }, name, input) {
   if (!userId || typeof userId !== 'string') throw new AiError('登录身份无效', 401);
   if (!getTools(scene).some(entry => entry.function.name === name)) throw new AiError('当前场景不允许此工具', 403, 'AI_TOOL_DENIED');
   const args = validateTool(name, input, today);
@@ -36,12 +37,24 @@ async function executeTool({ scene, userId, repository, today }, name, input) {
   // Proposal only. No dependency on writable account/card models.
   const choices = await repository.choices(userId);
   const category = args.categoryId === null ? null : choices.categories.find(item => item.id === args.categoryId);
-  const account = args.accountId === null ? null : choices.accounts.find(item => item.id === args.accountId);
-  if (args.categoryId !== null && (!category || category.type !== (args.direction === 0 ? 'expense' : 'income'))) {
+  let account = args.accountId === null ? null : choices.accounts.find(item => item.id === args.accountId);
+  if (args.categoryId !== null && (!isSupportedDraftCategory(category) || category.type !== (args.direction === 0 ? 'expense' : 'income'))) {
     throw new AiError('草稿分类不存在或不符合收支方向');
   }
   if (args.accountId !== null && !account) throw new AiError('草稿账户不属于当前用户或已停用');
   if (args.direction === 1 && account?.type === 'credit') throw new AiError('信用卡不支持收入草稿');
+  if (origin === 'model' && account && confirmedAccountId !== account.id) {
+    // Database ownership alone cannot resolve unnamed/same-name accounts for a model.
+    // Manual card edits carry an explicit ID and are validated separately.
+    const sameName = choices.accounts.filter(item => item.name === account.name);
+    const explicit = /(?:账户|账号)[：:\s]*[「“"]([^」”"]+)[」”"]/.exec(message)?.[1];
+    const matches = explicit ? choices.accounts.filter(item => item.name !== '未命名账户' && item.name.includes(explicit)) : null;
+    if (account.name === '未命名账户' || sameName.length !== 1 ||
+        (matches && (matches.length !== 1 || matches[0].id !== account.id))) {
+      account = null;
+      args.accountId = null;
+    }
+  }
   const missingFields = [];
   if (!category) missingFields.push('分类');
   if (!account) missingFields.push('账户');

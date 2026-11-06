@@ -31,6 +31,33 @@ class DebitAccount {
     if (!Number.isFinite(amt) || amt <= 0) {
       throw new Error('收支金额必须大于 0');
     }
+    // 普通接口也遵守同一锁协议，避免手动记账与 AI 确认同时通过余额校验。
+    if (executor === db) {
+      const conn = await db.getConnection();
+      let created;
+      try {
+        await conn.beginTransaction();
+        created = await this.create({ userId, direction, categoryId, payType, payMethod,
+          amount, currency, exchangeRate, transDate, remark, cardId, transferGroupId }, conn);
+        await conn.commit();
+      } catch (error) {
+        await conn.rollback();
+        throw error;
+      } finally {
+        conn.release();
+      }
+      setImmediate(() => {
+        AssetSnapshot.autoSaveSnapshot(userId).catch(error => {
+          console.error('[资产快照] 自动快照失败:', error.message);
+        });
+      });
+      try {
+        return await Account.findById(created.id, userId) || created;
+      } catch (error) {
+        console.error('[借记卡] 已入账，流水读取失败:', error.message);
+        return created;
+      }
+    }
     const id = idUtils.billId();
     const now = String(Date.now());
 
@@ -41,13 +68,25 @@ class DebitAccount {
     let finalAccountType = '';
     if (cardId && cardId !== 'xxxx' && cardId !== 'yyyy') {
       const [cardRows] = await executor.execute(
-        'SELECT card_type FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0',
+        'SELECT card_type FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
         [cardId, userId]
       );
       if (!cardRows[0]) {
         throw new Error('卡片不存在或无权访问');
       }
       finalAccountType = cardRows[0].card_type;
+    } else {
+      // 虚拟卡初始化后也锁本人卡行；旧账户尚无卡行时锁用户行作为稳定锚点。
+      const [cards] = await executor.execute(
+        'SELECT id FROM card_base WHERE id = ? AND user_id = ? AND is_deleted = 0 FOR UPDATE',
+        [cardId, userId]
+      );
+      if (!cards[0]) {
+        const [users] = await executor.execute(
+          'SELECT id FROM user_info WHERE id = ? AND is_deleted = 0 FOR UPDATE', [userId]
+        );
+        if (!users[0]) throw new Error('用户不存在');
+      }
     }
 
     // 借记卡模块拦截：若传入信用卡消费，拒绝（应走 credit 模块）
@@ -135,32 +174,15 @@ class DebitAccount {
       }
     }
 
-    // 系统自动检查并记录资产快照
-    setImmediate(() => {
-      AssetSnapshot.autoSaveSnapshot(userId).catch(err => {
-        console.error(`[资产快照] 自动快照失败:`, err.message);
-      });
-    });
-
-    // ⚠️ 事务内（executor 为事务连接）时，Account.findById 走全局连接读不到未提交记录，
-    //    会返回 null，导致调用方(如还款)无法取得流水 ID。此处直接返回内存对象保证可用。
-    //    非事务（默认连接）保持查库，返回完整记录供接口响应。
-    if (executor !== db) {
-      return {
-        id,
-        user_id: userId,
-        card_id: cardId || null,
-        direction,
-        amount,
-        currency: currency || 'CNY',
-        exchange_rate: exchangeRate || 1,
-        trans_date: transDate || now.substring(0, 10),
-        account_type: finalAccountType,
-        create_time: now,
-        update_time: now,
-      };
-    }
-    return Account.findById(id, userId);
+    // 外部事务未提交，直接返回已知流水；提交后的查询与资产快照由调用方安排。
+    return {
+      id, user_id: userId, card_id: cardId, direction, amount,
+      currency: currency || 'CNY', exchange_rate: exchangeRate || 1,
+      trans_date: transDate || now.substring(0, 10), account_type: finalAccountType,
+      create_time: now, update_time: now, category_id: categoryId,
+      pay_type: payType, pay_method: payMethod, remark: remark || '',
+      is_deleted: 0, transfer_group_id: transferGroupId || null,
+    };
   }
 
   /**

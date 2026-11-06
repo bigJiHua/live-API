@@ -4,8 +4,10 @@ logs/*.log
 # 依赖
 node_modules/
 
-# 环境变量
+# 环境变量（真实密钥只放本地，禁止提交）
 .env
+.env.local
+.env.*.local
 
 # 初始化标记（本地运行时状态）
 .init.flag

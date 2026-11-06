@@ -1,89 +1,106 @@
-# DeepSeek AI 测试版（契约 v1）
+# AI 真实联调（契约 v1）
 
-API 与 Web 均使用 `feat/deepseek-ai-test` 分支。此阶段验证工具调用、用户隔离和草稿隔离，**不提供正式入账接口**。
+API 与 Web 均使用 `feat/ai-assistant`。运行服务连接真实只读账本与 DeepSeek；模拟仓库和供应商替身只用于显式 `NODE_ENV=test` 的自动测试。2026-11-06 的变更与验收见 [当日合并日志](../../../logs/CHANGELOG_2026-11-06.md)。
 
-## 接口约定
+本轮业务统计与开放顺序见 [业务开放评估报表](../../../logs/AI_BUSINESS_OPENING_ASSESSMENT_2026-11-06.md)，图片识别实现与验收见 [当日合并日志·OCR 一节](../../../logs/CHANGELOG_2026-11-06.md)。
 
-全部接口位于 `/api/v1/ai`，沿用正式 API 的认证、安全请求头、AES 信封与 PIN 中间件，不新增鉴权白名单。所有响应 `Cache-Control: no-store`。
+## 数据访问与入账边界
 
-| 方法 | 路径 | 输入/用途 |
+模型收到的只是工具定义与获准发送的结果，不持有数据库连接、数据库密码、登录令牌或 DeepSeek Key。模型选择工具名和参数后，API 使用静态映射执行固定参数化 SQL；用户身份由登录中间件提供，工具参数不能传入身份、SQL、任意接口地址或额外字段。
+
+读取使用独立 `AI_DB_*` 连接池，每次启用 `SET TRANSACTION READ ONLY`，固定 SELECT 后回滚结束。数据库账号必须只有 SELECT 权限；代码拒绝 root，但实际权限还须通过 `SHOW GRANTS` 验证。SELECT 权限不能隔离用户，所有业务读取仍绑定当前 `user_id`。
+
+聊天工具只有 `query_finance_summary`、`query_transactions`、`list_record_choices`、`propose_transaction`。最后一个工具只生成独立草稿，不改变正式流水、余额或账单。模型不能调用正式入账接口。
+
+人工入账由 `POST /drafts/:id/commit` 单独触发，只接受版本号，业务字段全部取自库存档草稿。要求本人草稿、真实数据来源、未过期、已核对且版本一致。在同一事务内占用草稿、锁定并复验分类/正常账户、调用既有信用/借记写模型、保存流水号和回执，最后提交。异常回滚整组写入；相同版本重复提交会被拒绝。请求结果不明时先读取草稿或流水，不能凭聊天文字判断入账成功。
+
+`formalWriteEnabled=false` 沿用契约 v1，表示聊天工具没有直接写入能力；当前版本已有上述人工确认接口。前端通过草稿 `status=reviewed` 展示“去入账”并再次确认，不能把该标志理解成整个 API 没有正式写接口。
+
+草稿仅支持一笔普通人民币收支，金额正式入账精确到分，不默默舍入更细的小数。账户、分类、方向、日期、支付方式均需校验。转账、提现、购汇/结汇、还款、分期、冲正、退款、证券买卖和初始化余额等特殊分类在候选、草稿与提交三个入口统一拒绝，应使用原有专门流程。模型无法唯一确认的账户留空，由用户选择。人工核对仍是必要步骤，系统无法证明模型提取的金额就是现实交易金额。
+
+## 接口
+
+前缀 `/api/v1/ai`，沿用正式鉴权、安全请求头、AES 信封和 PIN 中间件，没有测试鉴权白名单；响应 `Cache-Control: no-store`。Web 请求层将业务体包装为现有加密信封。
+
+| 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/capabilities` | `contractVersion=1`、模式、是否启用、是否需要数据外发同意、`formalWriteEnabled=false` |
-| POST | `/chat` | 业务体 `{message, scene: "chat", consent: boolean, conversationId?: UUID}`；Web 请求层包装为 AES 信封；兼容旧query/draft场景 |
-| GET | `/drafts/:id` | 仅允许草稿所属登录用户读取，过期与无权限均返回404 |
-| PUT | `/drafts/:id` | `{version, fields}`：在聊天卡片内修改完整草稿字段，重新校验账户、分类和金额 |
-| POST | `/drafts/:id/action` | `{version, action: "review"或"discard"}`：仅标记核对或取消，禁止正式入账 |
-| GET | `/settings` | 当前用户的临时连接状态、官方API地址、模型与有效期；不返回Key |
-| PUT | `/settings` | `{apiUrl, apiKey?, model}`；检查官方models接口成功后应用，省略Key仅可复用本人已有临时Key |
-| DELETE | `/settings` | 清除当前用户临时Key并清除该用户聊天上下文 |
+| GET | `/capabilities` | 契约、模式、数据源和外发同意要求 |
+| POST | `/chat` | `{message, scene:"chat", consent, conversationId?, connectionId?}` |
+| POST | `/ocr` | `{image:{dataUrl}, message?, consent, conversationId?, connectionId?}`，单张图片识别 |
+| GET | `/drafts/:id` | 本人的草稿或已入账回执 |
+| PUT | `/drafts/:id` | `{version, fields}`，修改后重置为待核对 |
+| POST | `/drafts/:id/action` | `{version, action:"review"或"discard"}`，核对/取消不入账 |
+| POST | `/drafts/:id/commit` | `{version}`，人工确认正式入账 |
+| GET | `/conversations` | 本人的历史列表 |
+| GET | `/conversations/:id/messages` | 本人的历史消息 |
+| DELETE | `/conversations/:id` | 删除本人对话，不删除正式流水 |
+| GET / PUT / DELETE | `/settings` | 读取、检查并应用、清除临时连接；GET 不返回 Key |
+| POST | `/models` | 获取当前连接或明确指定供应商的模型列表 |
+| GET | `/balance` | DeepSeek 供应商额度，区别于账本余额 |
 
-`chat.data` 返回 `{contractVersion, mode, answer, conversationId, source, formalWriteEnabled, trace, draft}`。能力声明还包括 `chatEnabled=true`、`draftEditingEnabled=true`，防止旧后端配新界面。`trace` 包含工具名称、`readOnly=true` 和服务端实际结果；Web 在聊天内展示查询依据和交互草稿卡片，模型文字仅作为解释。不能通过工具或任何确认路由执行正式写入。
+`chat.data` 包含回答、conversationId、真实数据源、实际工具 trace 和草稿。聊天组件直接展示服务端工具结果作为查询依据；模型文字仅为解释。客户端不能上传模型 history/messages。
 
-## 工具与权限
+## 支付截图与账单识别
 
-- 查询场景仅提供 `query_finance_summary`、`query_transactions`。
-- 草稿场景仅提供 `list_record_choices`、`propose_transaction`。
-- 连续聊天场景提供上述四个受控工具，由模型按自然语言选择，用户无需切换标签。
-- 用户身份只取 `req.userId`；模型参数不能包含用户身份、SQL、URL或额外字段。
-- 模型调用由后端按静态名称映射执行，不使用 `eval`、任意HTTP请求、动态模块加载或模型生成SQL。
-- 日期按真实日历及 `Asia/Shanghai` 校验，查询最多93天；明细最多20条，分页偏移最多100。
-- 每次最多4次工具执行，最多4轮模型请求；每个进程每用户每分钟6次，禁止同用户同时调用。多实例部署还需共享限流存储。
-- 草稿修改/核对/取消合计每用户每分钟最多30次，修改必须携带当前版本；冲突返回409，不静默覆盖。
-- 草稿仅允许单笔普通人民币收支。账户/分类必须属于当前用户且类别与方向匹配；歧义字段保留null。**这些校验不能证明金额符合真实交易，草稿始终需要人工核对。**
-- 草稿存在独立进程内存，15分钟过期、最多500条、服务重启清除。编辑不延长过期时间。状态为pending/reviewed/discarded，核对不入账，取消后不可编辑。返回副本防止修改已存版本；此版本不承诺跨进程或重启后的草稿访问。
-- 连续对话同样保存在按用户隔离的进程内存：30分钟空闲过期、最多500个对话、只保留最近10条服务端生成的user/assistant消息和少量查询范围元数据，不保存全量明细。客户端只能传conversationId，不能上传模型history/messages或身份。追问读取当前已编辑草稿；过期/其他用户对话返回404。Web聊天仅存在页面内存，离开或刷新后清除，不写localStorage/sessionStorage。
-- 日志不记录DeepSeek密钥、用户原文、查询明细或供应商原始报错。
+在聊天输入框左侧点图片按钮，选择一张 JPEG/PNG/WebP，预览并单独同意外发后发送。原文件限制 8MiB，浏览器压缩后 dataURL 不超过 2MiB。请求沿用 AES、Cookie、PIN 与安全请求头；只有 OCR 路径允许 4MiB JSON 信封。服务端再次验证编码、内容格式、单帧和 24MP 限额，去元数据并重编码，不接受外部 URL、本机路径、SVG 或 GIF。
 
-## 真实只读查询
+官方 DeepSeek 连接使用支持视觉的 `deepseek-flash`，共用当前 Key；其他兼容供应商沿用选定模型，图像能力未实测。识别请求没有模型工具，超时 60 秒、禁止重定向，与普通聊天共享同用户并发及每分钟 6 次预算。
 
-聊天页“新对话”左侧设置按钮支持填写DeepSeek官方API地址和Key，选择 `deepseek-flash` 或 `deepseek-v4-pro`。需要后端显式设置 `AI_ALLOW_SESSION_SETTINGS=true`；默认关闭。仅接受 `https://api.deepseek.com` 官方地址（兼容/v1和/chat/completions输入），实际models/chat地址由代码固定，拒绝外部域名、内网、HTTP、凭据URL、查询参数和重定向。
+只有未截断、高置信、已完成的单笔普通人民币收支，且完整日期、到分金额、收支方向和符号与识别的日期/金额/状态/业务性质文本内部一致时，才生成 `source=image-ocr` 的待核对草稿。分类仅使用本人候选的唯一精确名称；账户始终留空，由用户选择。缺年份、金额/方向矛盾、失败/退款/待付款、转账/还款/分期/投资等特殊交易，以及多笔账单只展示识别表。账单最多识别 20 条，不支持批量入账。
 
-Key仅保存在后端按登录用户隔离的内存中，1小时后失效、最多500份；不改.env或数据库，不回传Key，不记录密钥或供应商原始错误。Key输入框关闭/成功应用后清空，不写浏览器存储。设置操作每用户每分钟最多5次并禁止并发；仍经过正常鉴权、安全头、AES和PIN链路。配置变更清除本人的短期聊天上下文；Web携带connectionId，临时配置过期时返回错误，不能静默变回模拟回答。
+草稿显示后不重复输出字段文字；识别原文依据折叠在卡片下。编辑、核对、取消和人工入账使用既有版本、归属、有效期与原子提交流程。结构化识别结果写入聊天 meta，可恢复最多前 5 条到模型上下文，并标记为不可信图片数据；原图和处理图仅留页面内存，不写公开上传目录或数据库。输出对长数字标识及链接做确定性脱敏；这不会遮挡外发图片中的可见个人信息，发送前应由用户裁剪或遮挡。
 
-“检查连接并应用”调用官方 `/models` 检查Key及模型权限；成功后实际对话仍须明确同意发送对话和必要查询数据。连接检查不是成功对话或真实工具调用的证明。
+当前图片草稿尚未结束时，聊天补充账户或修正字段会更新同一草稿 ID/版本并保留图片来源；已核对的草稿经修改后需再次核对。要记录另一笔交易请开始新对话，避免替换当前图片草稿。实时与历史聊天对同一草稿只显示一张卡，查询依据和草稿暂时读取失败提示另行保留。
 
-默认 `AI_MODE=disabled`。在站点后端配置 `.env.example` 中的 `AI_MODE=deepseek`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和独立 `AI_DB_*`。
+相同预处理图片顺序重传会复用本人未过期的待核对草稿或已入账回执。该哈希不能识别裁剪/变图，也没有跨实例唯一约束；它不是正式交易全局去重机制。模型的置信度与原文依据均来自识别输出，内部交叉校验不能证明现实事实准确，必须人工核对。
 
-建议先连接隔离的测试库。数据库管理员应给独立账号仅授予 `account`、`bus_category`、`card_base` 的 `SELECT` 权限，并核对 `SHOW GRANTS`。代码拒绝root及不完整配置，但不能替代管理员核验授权。
+## 持久化与限额
 
-该模块不导入正式可写连接池，也不调用旧业务模型。每次工具查询开启 `SET TRANSACTION READ ONLY` + 事务，执行固定参数化SELECT后回滚结束。数据库拒绝只读事务时停止查询，不降级成可写连接。
+三个 AI 表的增量升级脚本为 [018_ai_persistence.sql](../../../mysql/migrations/018_ai_persistence.sql)，与完整建库源一致。已有环境通过正常启动迁移创建缺失表，已存在表保留数据与结构；新环境使用 `live.sql`。升级要求与验证范围见 [MySQL 说明](../../../mysql/README.md) 和 [当日合并日志·迁移一节](../../../logs/CHANGELOG_2026-11-06.md)。
 
-连接池最多2个连接、队列最多8个请求；连接/查询超时5秒，DeepSeek请求超时20秒。供应商地址固定为 `https://api.deepseek.com/chat/completions`，禁止重定向和自定义工具URL。Web调用超时120秒。
+- 草稿存于 `bus_ai_draft`，状态为 pending/reviewed/discarded/committed，编辑/核对/取消均检查版本。提案 15 分钟有效，编辑不延长有效期；已入账回执可在提案有效期后读取。
+- 对话与消息存于 `ai_conversation` / `ai_message`。一轮的两条消息、最新草稿关联及更新时间同事务持久化后才返回；模型上下文只取最近 10 条服务端历史。历史列表最多 50 个、详情最多 200 条。现有策略在列表读取时清理 90 天未更新的对话，不清理正式账本。
+- 临时 Key 仅在后端按用户隔离的内存存储，1 小时有效、最多 500 份，重启后需要重设。不写 `.env`、数据库或浏览器存储，不回传 Key。修改供应商地址时必须明确提供该连接的 Key，不能隐式把旧地址的 Key 发往新地址。
+- 查询范围最多 93 天，明细每页最多 20 条、偏移最多 100；每轮最多 4 次工具执行、4 次模型请求。同进程每用户每分钟聊天 6 次、草稿操作 30 次、设置/模型列表合计 5 次；聊天与设置各禁止同用户并发。多实例部署仍需共享限流存储。
+- 只读连接池最多 2 个连接、等待队列 8 个，连接/查询超时 5 秒；模型请求 20 秒且禁止重定向，Web 聊天请求超时 120 秒。
 
-只读事务仍允许读取同一库内其他用户的数据，因此所有固定查询及关联均显式绑定当前用户；不能只依赖数据库账号的SELECT权限实现用户隔离。
+## 配置与真实页面
 
-汇总口径v1：剔除所有标记为“转账”的流水、信用卡还款、已删除及冲正记录；外币按记录汇率的每100外币口径折算为人民币，逐笔四舍五入到分。**所有“转账”标签均排除，含现有对外转账标签；尚未统一既有页面全部报表口径，也未引入信用卡外币银行实际对账口径。** 这不是资产/负债/现金流报告。
+默认 `AI_MODE=disabled`。真实运行需要 `.env.example` 中的 `AI_MODE=deepseek`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 与独立 `AI_DB_*`，人工入账沿用既有正式写连接。`AI_ALLOW_SESSION_SETTINGS=true` 才允许页面临时连接设置。
 
-发送真实请求前，Web需勾选将对话和必要结果发送至DeepSeek，API每轮检查 `consent===true`；未同意时不调用供应商或查询工具。只读身份不发送至模型；返回候选账户仅含别名、ID和类型，不含卡BIN/尾号/密码/令牌。模型能看到获准发送的短期聊天上下文、最近草稿状态、汇总、相关明细及备注。
+当前保留已有 OpenAI 兼容供应商地址能力：HTTPS 或明确本机 HTTP，拒绝 URL 内嵌凭据、查询参数、锚点与重定向。此次只对 DeepSeek 实际验收；其他供应商并未实测。自定义 HTTPS 地址尚不等同于完整 SSRF 防护；若部署为允许不可信用户填写地址的服务，还需要网络出口隔离或管理员维护的地址允许列表。
 
-## 无数据库联调
-
-沙盒独立于 `app.js`，不加载 `.env`、初始化/迁移/定时任务，不连接真实数据库。只监听本机；提供明确的合成身份和临时模拟AES握手。默认模拟回答；用户在设置填入有效Key并应用后，调用真实DeepSeek，但工具仍读取合成账本。沙盒显式开启 `AI_ALLOW_SESSION_SETTINGS=true` 与开发专用 `AI_SYNTHETIC_DATA=true`，后者在生产无效，不能绕过真实数据库配置。**沙盒不验证生产鉴权与PIN链路**，不能部署为真实后端。
+普通运行的 `AI_MODE=mock` 或 `AI_SYNTHETIC_DATA=true` 会停止服务，不能静默降级成模拟数据。旧 `ai:sandbox` 脚本已移除。
 
 ```powershell
-# 终端一：D:\Code\live\api
-npm run ai:sandbox
-# 默认仅监听127.0.0.1:8866
+# D:\Code\live\api：沿用 .env，真实路由与鉴权；只绑定本机
+npm run ai:real:server
+# 默认端口来自 PORT，未设置时为 7788
+# require(app) 不执行 app.js 的启动迁移与定时账务任务；这仍是具有正式写能力的真实 API。
 
-# 终端二：D:\Code\live\web
-$env:VITE_API_BASE_URL='http://127.0.0.1:8866'
-npm run dev -- --host 127.0.0.1 --port 5176 --strictPort
+# D:\Code\live\web：API 地址应指向上述服务
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-访问 `http://127.0.0.1:5176/ai`。该Vite进程走模拟沙盒；不要在此地址验证其他业务页。恢复普通联调时移除本终端的 `VITE_API_BASE_URL` 环境覆盖并重启Vite。
+本轮页面为 `http://127.0.0.1:5173/ai`。登录后需同意把对话和必要查询结果发送至 DeepSeek。外发数据限于相关汇总/明细/备注、账户分类候选与短期上下文；候选账户不含卡号、BIN、密码或令牌。该同意按每轮 API 检查，未同意不会调用模型或工具。
 
-也可在普通开发API中设置 `AI_MODE=mock` 测试正常鉴权链路；工具仍使用合成数据，但正式应用启动会执行现有初始化/定时逻辑，需自行使用测试库。生产环境禁止mock模式。
+消费汇总口径：排除标记“转账”的流水、信用卡还款、已删除及冲正记录；外币按每笔汇率的每 100 外币口径折算人民币并逐笔舍入到分。分页不能代表全量。本轮验证区间与页面一致，尚未证明全部历史、多币种银行对账或所有资产/负债报表一致。
 
 ## 验证
 
 ```powershell
-# API
+# API 自动回归：合成 fixture 仅验证协议与错误分支
 npm run test:ai
-# Web（依赖同级api目录及其现有依赖）
+# 真库权限、日期、汇总/明细与身份隔离：只读检查
+npm run ai:real:verify
+# 真 DeepSeek + 真 SQL + 正式写模型：外层事务内执行，最终全部回滚
+npm run ai:real:acceptance
+# 真 DeepSeek 视觉 + 真库 OCR/核对/提交验收：同样全部回滚
+npm run ai:real:ocr
+
+# Web
 npm run test:ai
 npm run build
 ```
 
-自动测试覆盖工具伪造、身份参数注入、非法日期、越权账户、分类方向、调用限额、失败草稿隔离、草稿过期、只读事务失败及HTTP协议；新增连接白名单、Key用户隔离、有效期、过期连接拒绝、models检查与真实provider工具链替身测试。测试使用合成数据与数据库/供应商替身，**未证明真实MySQL授权、有效Key下的真实DeepSeek完整对话或完整金融账务正确性**。
-
-原有普通写入的事务范围、日期/分类校验及幂等性仍需专项加固后，才能设计正式确认入账能力。本次仅修复借记/信用卡创建控制器中请求字段覆盖登录身份的问题。
+真实验收脚本不加载 app.js、不运行迁移/定时任务。写验收通过外层事务和 savepoint 包裹实际草稿、消息、现金/借记/信用写模型，最后比较正式流水、余额、账单、卡片与 AI 表的数量/摘要，确认回滚。它验证真实服务实现与数据库；浏览器另行验证正式 HTTP、登录 Cookie、加密请求和聊天组件。不能把任一单项检查当作整个金融系统的全面安全证明。

@@ -12,6 +12,8 @@
  */
 
 const jwt = require('jsonwebtoken');
+const http = require('http');
+const express = require('express');
 
 const { parseCookieHeader, cookieParser } = require('../../src/common/middleware/cookieParser');
 const {
@@ -91,10 +93,10 @@ describe('B·Cookie 属性（httpOnly 是核心）', () => {
     expect(buildCookieOptions().secure).toBe(true);
   });
 
-  it('path=/ 且带maxAge', () => {
+  it('path=/ 且将秒转换为 Express maxAge 所需的毫秒', () => {
     const o = buildCookieOptions(1234);
     expect(o.path).toBe('/');
-    expect(o.maxAge).toBe(1234);
+    expect(o.maxAge).toBe(1234000);
   });
 
   it('setAuthCookie 用正确的名字与选项下发', () => {
@@ -108,7 +110,41 @@ describe('B·Cookie 属性（httpOnly 是核心）', () => {
     expect(name).toBe(TOKEN_COOKIE_NAME);
     expect(val).toBe('tok123');
     expect(opts.httpOnly).toBe(true);
-    expect(opts.maxAge).toBe(999);
+    expect(opts.maxAge).toBe(999000);
+  });
+
+  // 用真实 Express 序列化，避免 mock 将秒/毫秒单位错误固化进测试。
+  function makeExpressResponse() {
+    const req = { method: 'GET' };
+    const res = new http.ServerResponse(req);
+    Object.setPrototypeOf(res, express.response);
+    res.req = req;
+    return res;
+  }
+
+  it.each([['7d', 604800], ['12h', 43200], ['30m', 1800]])(
+    '%s 的 Set-Cookie Max-Age 与 JWT 有效期秒数一致',
+    (ttl, expectedSec) => {
+      const now = Date.now();
+      const res = makeExpressResponse();
+      setAuthCookie(res, 'synthetic-unit-test-token', resolveTokenTtlSec(ttl));
+      const header = [].concat(res.getHeader('Set-Cookie'))[0];
+      expect(header).toContain(`Max-Age=${expectedSec};`);
+      const expires = /Expires=([^;]+)/.exec(header)[1];
+      expect(Math.abs(Date.parse(expires) - (now + expectedSec * 1000))).toBeLessThan(2000);
+      expect(header).toContain('HttpOnly');
+      expect(header).toContain('SameSite=Lax');
+    }
+  );
+
+  it('不指定 TTL 时真实 Cookie 存活 7 天，登出仍立即过期', () => {
+    const res = makeExpressResponse();
+    setAuthCookie(res, 'synthetic-unit-test-token');
+    expect([].concat(res.getHeader('Set-Cookie'))[0]).toContain('Max-Age=604800;');
+    clearAuthCookie(res);
+    const cleared = res.getHeader('Set-Cookie')[1];
+    expect(cleared).toContain(`${TOKEN_COOKIE_NAME}=;`);
+    expect(Date.parse(/Expires=([^;]+)/.exec(cleared)[1])).toBeLessThan(Date.now());
   });
 
   it('clearAuthCookie 属性与设置时一致（否则浏览器清不掉）', () => {

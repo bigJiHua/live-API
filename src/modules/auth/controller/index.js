@@ -359,18 +359,26 @@ class AuthController {
       // 2. 查询用户（带密码变更时间）
       let user;
       try {
-        const [users] = await db.execute(
-          'SELECT id, username, email, avatar, identity, status, password_changed_at FROM user_info WHERE id = ? AND is_deleted = 0 LIMIT 1',
-          [decoded.userId]
-        );
-        user = users[0];
-      } catch {
-        // password_changed_at 字段可能尚未迁移，回退到基础查询
-        const [users] = await db.execute(
-          'SELECT id, username, email, avatar, identity, status FROM user_info WHERE id = ? AND is_deleted = 0 LIMIT 1',
-          [decoded.userId]
-        );
-        user = users[0];
+        try {
+          const [users] = await db.execute(
+            'SELECT id, username, email, avatar, identity, status, password_changed_at FROM user_info WHERE id = ? AND is_deleted = 0 LIMIT 1',
+            [decoded.userId]
+          );
+          user = users[0];
+        } catch (error) {
+          const missingPasswordColumn = error.code === "ER_BAD_FIELD_ERROR" &&
+            /Unknown column 'password_changed_at' in /i.test(error.sqlMessage || error.message || "");
+          if (!missingPasswordColumn) throw error;
+          // password_changed_at 尚未迁移时兼容旧表；其他数据库错误直接拒绝刷新。
+          const [users] = await db.execute(
+            'SELECT id, username, email, avatar, identity, status FROM user_info WHERE id = ? AND is_deleted = 0 LIMIT 1',
+            [decoded.userId]
+          );
+          user = users[0];
+        }
+      } catch (error) {
+        console.error("[refreshToken] user lookup failed", { code: error.code || "UNKNOWN" });
+        return res.status(503).json({ status: 503, message: "认证服务暂时不可用，请稍后重试" });
       }
       if (!user) {
         return res.status(404).json({ message: "用户不存在" });
@@ -434,7 +442,7 @@ class AuthController {
       });
     } catch (error) {
       console.error("刷新 Token 错误:", error);
-      res.status(401).json({ ...buildErrorBody("Token 无效或已过期", error) });
+      res.status(500).json({ status: 500, message: "Token 刷新失败，请稍后重试" });
     }
   }
 

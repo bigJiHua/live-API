@@ -37,6 +37,26 @@ describe('AI repository: SQL is fixed, scoped and read-only', () => {
       expect(params).toEqual(['user_a']);
     }
   });
+  test('choices exclude special categories and select only normal owned accounts', async () => {
+    const ordinary = [{ id: 'food', name: '餐饮', type: 'expense' }, { id: 'profit', name: '投资收益', type: 'income' }];
+    const cards = [{ id: 'normal', name: '日常账户', type: 'debit', status: '正常' },
+      { id: 'lost', name: '挂失账户', type: 'debit', status: '挂失' },
+      { id: 'closed', name: '注销账户', type: 'credit', status: '注销' }];
+    connection.execute.mockImplementation(async statement => {
+      if (statement.sql.includes('FROM bus_category')) return [[...ordinary,
+        { id: 'installment', name: '重命名分类', type: 'expense' },
+        { id: 'initial', name: '初始化余额', type: 'income' },
+        { id: 'move', name: '转账', type: 'expense' }]];
+      const selected = statement.sql.includes("status = '正常'") ? cards.filter(card => card.status === '正常') : cards;
+      return [selected.map(({ status, ...card }) => card)];
+    });
+    const result = await createReadRepository({ user: 'readonly' }).choices('owner');
+    expect(result.categories).toEqual(ordinary);
+    expect(result.accounts).toEqual([{ id: 'normal', name: '日常账户', type: 'debit' }]);
+    const [statement, params] = connection.execute.mock.calls.find(([statement]) => statement.sql.includes('FROM card_base'));
+    expect(statement.sql).toContain('user_id = ?');
+    expect(params).toEqual(['owner']);
+  });
   test('database failure rolls back and releases, suppresses internal error details', async () => {
     connection.execute.mockRejectedValue(new Error('password=private; SQL internal detail'));
     await expect(createReadRepository({}).summary('a', { startDate: '2026-11-01', endDate: '2026-11-05' }))

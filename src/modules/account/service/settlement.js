@@ -51,12 +51,12 @@ class AccountSettlement {
   /**
    * 获取余额快照
    */
-  static async getBalanceSnapshot(cardId, userId) {
+  static async getBalanceSnapshot(cardId, userId, executor = db) {
     const query = `
       SELECT * FROM account_balance 
       WHERE card_id = ? AND user_id = ? AND is_deleted = 0
     `;
-    const [rows] = await db.execute(query, [cardId, userId]);
+    const [rows] = await executor.execute(query, [cardId, userId]);
     return rows[0] || null;
   }
 
@@ -265,7 +265,7 @@ class AccountSettlement {
       [id, userId, cardId, balanceInfo.balance, now]
     );
 
-    return this.getBalanceSnapshot(cardId, userId);
+    return this.getBalanceSnapshot(cardId, userId, executor);
   }
 
   /**

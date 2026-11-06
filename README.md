@@ -1,8 +1,14 @@
 # Golden Finance API — 生活管理系统后端
 
-> **更新日期**: 2026-10-18
+> **更新日期**: 2026-11-06
 
-> **AI测试分支（2026-11-05）**：`feat/deepseek-ai-test`，与Web同名分支对齐。支持DeepSeek连续聊天、临时API/Key设置、只读工具调用和聊天内草稿修改/核对/取消，默认关闭、无正式入账能力。详见 [AI模块与联调说明](src/modules/ai/README.md) 和 [变更/验证日志](logs/CHANGELOG_2026-11-05_AI.md)。
+> **AI真实联调（2026-11-06）**：`feat/ai-assistant`，与Web同名分支对齐。运行服务接真实只读账本和DeepSeek；聊天内草稿可编辑/核对/取消，人工确认入账经版本校验及统一事务。已移除运行沙盒，mock仅限自动测试。详见 [AI模块与联调说明](src/modules/ai/README.md) 和 [真实联调日志](logs/CHANGELOG_2026-11-06.md)。
+
+> **业务开放与 OCR（2026-11-06）**：已统计 20 模块、23 路由组、183 HTTP 接口，给出 AI 开放矩阵及 GET 写副作用清单。聊天可上传支付截图/账单，由真实 DeepSeek 识别为待核对草稿或多笔核对表。详见 [业务开放评估报表](logs/AI_BUSINESS_OPENING_ASSESSMENT_2026-11-06.md) 和 [OCR 联调日志](logs/CHANGELOG_2026-11-06.md)。
+
+> **金额精度修复（2026-11-06）**：修正四位截断时的浮点倍率误差，避免39.91显示/折算成39.9099；真实四位小数仍保留。修复全额还款填值与信用金额输出边界。详见 [金额精度修复与真库核查](logs/CHANGELOG_2026-11-06.md)。
+
+> **AI 表增量迁移（2026-11-06）**：补齐 [018_ai_persistence.sql](mysql/migrations/018_ai_persistence.sql)，创建草稿、会话与消息三表，支持已有环境幂等升级。详见 [MySQL 升级说明](mysql/README.md) 和 [迁移补齐日志](logs/CHANGELOG_2026-11-06.md)。
 
 为 Golden Finance 移动端 PWA 应用提供 RESTful API 支持，涵盖用户认证、财务管理、银行卡、工资核算、理财投资、数据备份等完整功能。
 
@@ -40,9 +46,9 @@ api/
 │
 ├── src/
 │   ├── api/                     # 路由层
-│   │   └── index.js             # API 路由统一注册（22 个子路由，2026-10-13 冗余接口清理后）
+│   │   └── index.js             # API 路由统一注册（23 个路由组，2026-11-06 含 AI）
 │   │
-│   ├── modules/                 # 业务模块（19 个，按功能划分，每个模块含 api/controller/model/rules）
+│   ├── modules/                 # 业务模块（20 个，按功能划分，AI 含受控工具与草稿）
 │   │   ├── auth/                # 认证模块（登录/Token/用户信息/用户模型/登录日志）
 │   │   ├── security/            # 安全模块（PIN 码状态/设置/验证/修改/风险路由验证）
 │   │   ├── account/             # 账务模块
@@ -66,7 +72,8 @@ api/
 │   │   ├── dataManager/         # 数据管理模块（备份/导出/导入）
 │   │   ├── flow/                # 流水详情/日历模块
 │   │   ├── geo/                 # 地理位置代理模块
-│   │   └── share/               # 公开分享模块
+│   │   ├── share/               # 公开分享模块
+│   │   └── ai/                  # 财务聊天、受控读取、草稿与图片识别
 │   │
 │   ├── common/                  # 公共模块
 │   │   ├── config/
@@ -450,6 +457,7 @@ modules/{模块名}/
 
 | 日期 | 内容 |
 |------|------|
+| 2026-11-06 | [今日合并日志：认证401排查、金额精度、AI表迁移、真实联调、OCR与聊天交互精简](logs/CHANGELOG_2026-11-06.md) |
 | 2026-10-13 | 冗余接口清理：整组删除 `/bank`、`/bank-category`、`/resource`、`/database`，并删除 `/user/settings` 等零散接口（启用路由 192→165）；`/user/email/send-code` 补上 Joi validator。见 `src/api/index.js:50-52` 注释 |
 | 2026-10-12 | 修复 httpOnly Cookie 通道下 PIN 风控对 web **静默失效**（`pinSecurityGuard` 改认 Cookie 令牌，与 `extractToken` 双通道对齐） |
 | 2026-10-08 | P0-5：认证 token 改为 httpOnly Cookie（新增 `cookieParser.js`）；P1-18：`TRUST_PROXY_HOPS` 收敛 XFF 信任（见 `src/common/middleware/cookieParser.js`、`app.js:59-65`） |
