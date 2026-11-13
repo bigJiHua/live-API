@@ -68,7 +68,7 @@ function buildServerSideLogFields(req, userId) {
 }
 
 /**
- * 邮箱脱敏：`jihua@163.com` → `j***@163.com`
+ * 邮箱脱敏：`user@example.com` → `u***@example.com`
  * 用于日志输出：邮箱本身也是 PII（金融级个人金融信息规范要求最小化展示）。
  */
 function maskEmail(email) {

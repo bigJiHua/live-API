@@ -1,6 +1,7 @@
 const { validateTool } = require('./validation');
 const { AiError } = require('./errors');
 const { isSupportedDraftCategory } = require('./draftPolicy');
+const { isAnonymousCardName } = require('./cardNames');
 const date = { type: 'string', description: 'YYYY-MM-DD，按Asia/Shanghai解析，不能晚于今天' };
 const range = { startDate: date, endDate: date };
 function tool(name, description, properties, required) {
@@ -48,8 +49,8 @@ async function executeTool({ scene, userId, repository, today, origin, message =
     // Manual card edits carry an explicit ID and are validated separately.
     const sameName = choices.accounts.filter(item => item.name === account.name);
     const explicit = /(?:账户|账号)[：:\s]*[「“"]([^」”"]+)[」”"]/.exec(message)?.[1];
-    const matches = explicit ? choices.accounts.filter(item => item.name !== '未命名账户' && item.name.includes(explicit)) : null;
-    if (account.name === '未命名账户' || sameName.length !== 1 ||
+    const matches = explicit ? choices.accounts.filter(item => !isAnonymousCardName(item.name) && item.name.includes(explicit)) : null;
+    if (isAnonymousCardName(account.name) || sameName.length !== 1 ||
         (matches && (matches.length !== 1 || matches[0].id !== account.id))) {
       account = null;
       args.accountId = null;

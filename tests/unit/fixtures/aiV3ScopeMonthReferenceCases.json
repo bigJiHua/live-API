@@ -1,0 +1,402 @@
+{
+  "requestId": "bbbc2864-ad8b-4896-99b2-51c99afc6624",
+  "message": "回到刚才11月资产系统快照部分，范围不变，只展示前1条，保留保存净值和币种未确认的说明，不要图。",
+  "expectedScope": {
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-09"
+  },
+  "taskContexts": {
+    "version": 1,
+    "tasks": [
+      {
+        "version": 1,
+        "mode": "query",
+        "subject": "asset",
+        "metric": "summary",
+        "cardTypes": [],
+        "chartRequest": null,
+        "comparisonScopes": [],
+        "status": "succeeded",
+        "targetDatasetId": "asset-snapshots",
+        "requireFreshQuery": true,
+        "scope": {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-09"
+        }
+      },
+      {
+        "version": 1,
+        "mode": "query",
+        "subject": "work",
+        "metric": "summary",
+        "cardTypes": [],
+        "chartRequest": null,
+        "comparisonScopes": [],
+        "status": "succeeded",
+        "targetDatasetId": "work-salary",
+        "requireFreshQuery": true,
+        "scope": {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-09"
+        }
+      },
+      {
+        "version": 1,
+        "mode": "query",
+        "subject": "finance",
+        "metric": "transaction-max",
+        "cardTypes": [],
+        "chartRequest": null,
+        "comparisonScopes": [
+          {
+            "startDate": "2026-06-01",
+            "endDate": "2026-06-30"
+          }
+        ],
+        "status": "succeeded",
+        "targetDatasetId": "finance-transactions",
+        "querySort": "amountDesc",
+        "requireFreshQuery": true,
+        "scope": {
+          "startDate": "2026-06-01",
+          "endDate": "2026-06-30"
+        }
+      },
+      {
+        "version": 1,
+        "mode": "query",
+        "subject": "cards",
+        "metric": "card-consumption",
+        "cardTypes": [
+          "credit"
+        ],
+        "chartRequest": null,
+        "comparisonScopes": [],
+        "status": "succeeded",
+        "targetDatasetId": "card-monthlyConsumption",
+        "requireFreshQuery": true,
+        "scope": {
+          "startDate": "2026-09-01",
+          "endDate": "2026-11-09"
+        }
+      }
+    ]
+  },
+  "previousQueryCoverage": [
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "work-salary",
+      "requestedScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "both",
+        "text": ""
+      },
+      "sort": "dateDesc",
+      "matchedRowCount": 0,
+      "returnedRowCount": 0,
+      "sourceRecordCount": 0,
+      "incomeCount": null,
+      "expenseCount": null,
+      "rowsComplete": true,
+      "summaryComplete": true,
+      "rankingComplete": false,
+      "queryId": "q_ac5038d1a8bc26cf235e5a18",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T10:08:38.261Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "finance-monthly",
+      "requestedScope": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "effectiveScope": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "filters": {
+        "direction": "both",
+        "text": ""
+      },
+      "sort": "monthAsc",
+      "matchedRowCount": 1,
+      "returnedRowCount": 1,
+      "sourceRecordCount": 268,
+      "incomeCount": 115,
+      "expenseCount": 153,
+      "rowsComplete": true,
+      "summaryComplete": true,
+      "rankingComplete": true,
+      "queryId": "q_156eb986675811bb37f76457",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T12:36:57.790Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "card-monthlyConsumption",
+      "requestedScope": {
+        "startDate": "2026-09-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-09-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "expense",
+        "text": ""
+      },
+      "sort": "dateDesc",
+      "matchedRowCount": 11,
+      "returnedRowCount": 11,
+      "sourceRecordCount": 25,
+      "incomeCount": 0,
+      "expenseCount": 25,
+      "rowsComplete": true,
+      "summaryComplete": true,
+      "rankingComplete": false,
+      "queryId": "q_ba51580cf3016811eced04c3",
+      "groupBy": "cardMonth",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T12:36:57.820Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "asset-snapshots",
+      "requestedScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "both",
+        "text": ""
+      },
+      "sort": "dateDesc",
+      "matchedRowCount": 1,
+      "returnedRowCount": 1,
+      "sourceRecordCount": null,
+      "incomeCount": null,
+      "expenseCount": null,
+      "rowsComplete": true,
+      "summaryComplete": false,
+      "rankingComplete": false,
+      "queryId": "q_72ae2cf3aaa1083305997259",
+      "returnedDateRange": {
+        "startDate": "2026-11-06",
+        "endDate": "2026-11-06"
+      },
+      "asOf": "2026-11-09T12:37:02.916Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "work-salary",
+      "requestedScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "both",
+        "text": ""
+      },
+      "sort": "dateDesc",
+      "matchedRowCount": 0,
+      "returnedRowCount": 0,
+      "sourceRecordCount": 0,
+      "incomeCount": null,
+      "expenseCount": null,
+      "rowsComplete": true,
+      "summaryComplete": true,
+      "rankingComplete": false,
+      "queryId": "q_88b20dad10dc82ad8d721846",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T12:37:02.942Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "work-salary",
+      "requestedScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "both",
+        "text": ""
+      },
+      "sort": "dateDesc",
+      "matchedRowCount": 0,
+      "returnedRowCount": 0,
+      "sourceRecordCount": 0,
+      "incomeCount": null,
+      "expenseCount": null,
+      "rowsComplete": true,
+      "summaryComplete": true,
+      "rankingComplete": false,
+      "queryId": "q_425b12eed1c8a83fba66c618",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T12:38:00.624Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "finance-transactions",
+      "requestedScope": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "effectiveScope": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "filters": {
+        "direction": "expense",
+        "text": ""
+      },
+      "sort": "amountDesc",
+      "matchedRowCount": 153,
+      "returnedRowCount": 1,
+      "sourceRecordCount": 153,
+      "incomeCount": 0,
+      "expenseCount": 153,
+      "rowsComplete": false,
+      "summaryComplete": true,
+      "rankingComplete": true,
+      "queryId": "q_ad828b7a56ffe4b72f3bc238",
+      "returnedDateRange": {
+        "startDate": "2026-06-18",
+        "endDate": "2026-06-18"
+      },
+      "asOf": "2026-11-09T12:38:27.316Z"
+    },
+    {
+      "version": 1,
+      "source": "previous-turn",
+      "status": "succeeded",
+      "datasetId": "card-monthlyConsumption",
+      "requestedScope": {
+        "startDate": "2026-09-01",
+        "endDate": "2026-11-09"
+      },
+      "effectiveScope": {
+        "startDate": "2026-09-01",
+        "endDate": "2026-11-09"
+      },
+      "filters": {
+        "direction": "expense",
+        "text": "",
+        "cardTypes": [
+          "credit"
+        ]
+      },
+      "sort": "amountDesc",
+      "matchedRowCount": 3,
+      "returnedRowCount": 1,
+      "sourceRecordCount": 6,
+      "incomeCount": 0,
+      "expenseCount": 6,
+      "rowsComplete": false,
+      "summaryComplete": true,
+      "rankingComplete": true,
+      "queryId": "q_1dec24df51cbadad6fb2889c",
+      "cardTypes": [
+        "credit"
+      ],
+      "groupBy": "card",
+      "returnedDateRange": null,
+      "asOf": "2026-11-09T12:38:53.133Z"
+    }
+  ],
+  "modelArgs": {
+    "datasetId": "asset-snapshots",
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-09",
+    "limit": 1
+  },
+  "actualEffectiveScope": {
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-30"
+  },
+  "source": {
+    "datasetId": "asset-snapshots",
+    "domain": "asset",
+    "title": "流动资产系统快照",
+    "columns": [
+      {
+        "key": "date",
+        "label": "日期",
+        "type": "date"
+      },
+      {
+        "key": "totalAsset",
+        "label": "流动资产",
+        "type": "money"
+      },
+      {
+        "key": "creditDebt",
+        "label": "信用卡负债",
+        "type": "money"
+      },
+      {
+        "key": "netAsset",
+        "label": "净资产",
+        "type": "money"
+      },
+      {
+        "key": "recordedAt",
+        "label": "保存时间",
+        "type": "text"
+      }
+    ],
+    "rows": [
+      {
+        "date": "2026-11-06",
+        "totalAsset": "14886.64",
+        "creditDebt": "5967.50",
+        "netAsset": "8919.14",
+        "recordedAt": "2026-11-05T16:43:54.000Z",
+        "ref": "r_f3a1e310c0a636d0a6b3808dd8283020"
+      }
+    ],
+    "summary": {
+      "currency": "unverified"
+    },
+    "policy": "查询范围 2026-11-01 至 2026-11-30。已保存流动资产快照，范围不含固定资产和基金；总额无币种字段，旧生成逻辑可能混币，不能视为已证明人民币总额；不重建余额或重新清算。 按快照日期从新到旧排列，同日保留多条保存记录并保持固定顺序；保存时间单独列出。",
+    "asOf": "2026-11-09T12:39:15.630Z",
+    "isEstimated": false,
+    "truncated": false,
+    "totalCount": 1,
+    "coverage": "liquid-assets-snapshot"
+  }
+}

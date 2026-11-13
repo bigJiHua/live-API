@@ -21,20 +21,27 @@ const CARD = 'card-id';
 const input = { userId: USER, direction: 0, categoryId: 'category-id', payType: '餐饮',
   payMethod: '银行卡', amount: 40, currency: 'CNY', transDate: '2026-11-06', cardId: CARD };
 
-function makeConnection(type = 'credit', { ownsCard = true, balance = 100 } = {}) {
-  const ledger = [{ direction: 1, amount: balance, currency: 'CNY', exchange_rate: 1 }];
+function makeConnection(type = 'credit', { ownsCard = true, balance = 100, cardId = CARD,categoryName='餐饮',ownsCategory=true } = {}) {
+  const entry = (direction, amount, id='funding-id') => ({id,card_id:cardId,direction,amount:String(amount),currency:'CNY',
+    exchange_rate:'1.00',trans_date:input.transDate,category_id:'category-id',reversed_id:null,create_time:'1',update_time:'1'});
+  const ledger = type==='credit'?[]:[entry(1,balance)];
   return {
+    query: jest.fn().mockResolvedValue(),
     beginTransaction: jest.fn().mockResolvedValue(), commit: jest.fn().mockResolvedValue(),
     rollback: jest.fn().mockResolvedValue(), release: jest.fn(),
-    execute: jest.fn(async (sql, params) => {
+    execute: jest.fn(async (query, params) => {
+      const sql = typeof query === 'string' ? query : query.sql;
       if (/FROM card_base/.test(sql)) {
-        return [ownsCard ? [{ id: CARD, card_type: type, share_pool_id: null, credit_limit: 1000, temp_limit: 0 }] : []];
+        return [ownsCard ? [{ id: cardId, card_type: type,currency:'CNY',status:'正常',share_pool_id: null,
+          credit_limit:'1000.00',temp_limit:'0.00',bill_day:5,repay_day:25,update_time:'1' }] : []];
       }
       if (/FROM user_info/.test(sql)) return [[{ id: USER }]];
+      if (/FROM bus_category/.test(sql)) return [ownsCategory?[{id:'category-id',name:categoryName,type:'expense'}]:[]];
+      if (/FROM card_foreign_register|FROM card_repay/.test(sql)) return [[]];
       if (/FROM account_balance/.test(sql)) return [[{ balance: 60 }]];
       if (/FROM account\s/.test(sql)) return [[...ledger]];
       if (/INSERT INTO account\s/.test(sql)) {
-        ledger.push({ direction: params[2], amount: params[7], currency: params[8], exchange_rate: params[9] });
+        ledger.push({...entry(params[2],params[7],'record-id'),currency:params[8],exchange_rate:params[9]});
       }
       return [{ affectedRows: 1 }];
     }),
@@ -44,7 +51,10 @@ function makeConnection(type = 'credit', { ownsCard = true, balance = 100 } = {}
 beforeEach(() => {
   jest.clearAllMocks();
   db.execute.mockImplementation(() => { throw new Error('External transaction must not access the public pool'); });
-  CreditCore.aggregate.mockResolvedValue({ cards: [{ shared: false, cardId: CARD, creditLimit: 1000, tempLimit: 0, avail: 1000 }] });
+  CreditCore.aggregate.mockImplementation(async(owner,executor)=>{
+    await executor.execute('SELECT id FROM card_base WHERE user_id = ?', [owner]);
+    return { cards: [{ shared: false, cardId: CARD, creditLimit: 1000, tempLimit: 0, avail: 1000 }] };
+  });
   CreditCore.syncCardBills.mockResolvedValue();
   ForeignRegister.deleteByAccountId.mockResolvedValue();
   ForeignRegister.ensurePending.mockResolvedValue();
@@ -73,7 +83,8 @@ test('credit external executor locks the owner card and keeps record, registrati
   const record = await CreditAccount.create(input, conn);
   expect(record).toMatchObject({ id: 'record-id', user_id: USER, card_id: CARD, amount: 40 });
   expect(conn.execute).toHaveBeenCalledWith(expect.stringContaining('user_id = ? AND is_deleted = 0 FOR UPDATE'), [CARD, USER]);
-  expect(CreditCore.aggregate).toHaveBeenCalledWith(USER, conn);
+  expect(CreditCore.aggregate).toHaveBeenCalledWith(USER, expect.objectContaining({execute:expect.any(Function)}));
+  expect(conn.execute).toHaveBeenCalledWith(expect.objectContaining({sql:'SELECT id FROM card_base WHERE user_id = ?'}),[USER]);
   expect(ForeignRegister.deleteByAccountId).toHaveBeenCalledWith('record-id', USER, conn);
   expect(CreditCore.syncCardBills).toHaveBeenCalledWith(CARD, USER, conn);
   expectCallerOwnsTransaction(conn);
@@ -100,6 +111,8 @@ test('credit ordinary create still commits, releases, then reads the complete re
   const record = await CreditAccount.create(input);
   expect(record.fullRecord).toBe(true);
   expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
+  expect(conn.query).toHaveBeenCalledWith('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+  expect(conn.query.mock.invocationCallOrder[0]).toBeLessThan(conn.beginTransaction.mock.invocationCallOrder[0]);
   expect(conn.commit).toHaveBeenCalledTimes(1);
   expect(conn.rollback).not.toHaveBeenCalled();
   expect(conn.release).toHaveBeenCalledTimes(1);
@@ -132,7 +145,7 @@ test('credit failure before its own commit still rolls back and never schedules 
 test.each([CreditAccount, DebitAccount])('an external create refuses a missing or foreign card before insert', async model => {
   const conn = makeConnection(model === CreditAccount ? 'credit' : 'debit', { ownsCard: false });
   await expect(model.create(input, conn)).rejects.toThrow('卡片不存在');
-  expect(conn.execute.mock.calls.some(([sql]) => /INSERT INTO account\s/.test(sql))).toBe(false);
+  expect(conn.execute.mock.calls.some(([sql]) => /INSERT INTO account\s/.test(typeof sql==='string'?sql:sql.sql))).toBe(false);
   expectCallerOwnsTransaction(conn);
 });
 
@@ -141,7 +154,7 @@ test('debit external executor locks the card before same-connection balance read
   const calculate = jest.spyOn(Settlement, 'calculateBalance');
   const record = await DebitAccount.create(input, conn);
   expect(record.id).toBe('record-id');
-  const queries = conn.execute.mock.calls.map(([sql]) => sql);
+  const queries = conn.execute.mock.calls.map(([sql]) => typeof sql==='string'?sql:sql.sql);
   const lockIndex = queries.findIndex(sql => /card_base.*FOR UPDATE/.test(sql));
   const balanceIndex = queries.findIndex(sql => /FROM account\s/.test(sql));
   const insertIndex = queries.findIndex(sql => /INSERT INTO account\s/.test(sql));
@@ -154,18 +167,18 @@ test('debit external executor locks the card before same-connection balance read
   expectCallerOwnsTransaction(conn);
 });
 
-test('debit external legacy virtual accounts without a card row lock the user before balance reads', async () => {
+test('debit external legacy virtual accounts lock the user but cannot treat a missing card as usable funds', async () => {
   const conn = makeConnection('debit', { ownsCard: false });
-  await DebitAccount.create({ ...input, cardId: 'xxxx' }, conn);
-  const queries = conn.execute.mock.calls.map(([sql]) => sql);
+  await expect(DebitAccount.create({ ...input, cardId: 'xxxx' }, conn)).rejects.toThrow('账户不存在');
+  const queries = conn.execute.mock.calls.map(([sql]) => typeof sql==='string'?sql:sql.sql);
   const lockIndex = queries.findIndex(sql => /user_info.*FOR UPDATE/.test(sql));
   expect(lockIndex).toBeGreaterThanOrEqual(0);
-  expect(queries.findIndex(sql => /FROM account\s/.test(sql))).toBeGreaterThan(lockIndex);
+  expect(queries.some(sql=>/INSERT INTO account\s|FROM account\s/.test(sql))).toBe(false);
   expectCallerOwnsTransaction(conn);
 });
 
 test('debit initialized virtual accounts use the same card row lock as other account writers', async () => {
-  const conn = makeConnection('debit');
+  const conn = makeConnection('virtual_cash',{cardId:'xxxx'});
   await DebitAccount.create({ ...input, cardId: 'xxxx' }, conn);
   expect(conn.execute).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE'), ['xxxx', USER]);
   expect(conn.execute.mock.calls.some(([sql]) => /FROM user_info/.test(sql))).toBe(false);
@@ -174,8 +187,8 @@ test('debit initialized virtual accounts use the same card row lock as other acc
 
 test('debit insufficient funds are rejected before the account insert', async () => {
   const conn = makeConnection('debit', { balance: 20 });
-  await expect(DebitAccount.create(input, conn)).rejects.toThrow('余额不足');
-  expect(conn.execute.mock.calls.some(([sql]) => /INSERT INTO account\s/.test(sql))).toBe(false);
+  await expect(DebitAccount.create(input, conn)).rejects.toThrow('不足');
+  expect(conn.execute.mock.calls.some(([sql]) => /INSERT INTO account\s/.test(typeof sql==='string'?sql:sql.sql))).toBe(false);
   expectCallerOwnsTransaction(conn);
 });
 
@@ -184,6 +197,8 @@ test('debit ordinary create owns the transaction, keeps snapshot atomic and read
   db.getConnection.mockResolvedValue(conn);
   await expect(DebitAccount.create(input)).resolves.toMatchObject({ id: 'record-id', fullRecord: true });
   expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
+  expect(conn.query).toHaveBeenCalledWith('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+  expect(conn.query.mock.invocationCallOrder[0]).toBeLessThan(conn.beginTransaction.mock.invocationCallOrder[0]);
   expect(conn.commit).toHaveBeenCalledTimes(1);
   expect(conn.rollback).not.toHaveBeenCalled();
   expect(conn.release).toHaveBeenCalledTimes(1);
@@ -213,4 +228,36 @@ test('debit post-commit record read failure returns the known inserted record', 
   expect(conn.commit).toHaveBeenCalledTimes(1);
   expect(conn.rollback).not.toHaveBeenCalled();
   expect(conn.release).toHaveBeenCalledTimes(1);
+});
+
+test('ordinary debit cannot bypass source validation by injecting a transfer group',async()=>{
+  const conn=makeConnection('debit');
+  await expect(DebitAccount.create({...input,transferGroupId:'forged-group'},conn)).rejects.toThrow('普通收支不允许');
+  expect(conn.execute).not.toHaveBeenCalled();expectCallerOwnsTransaction(conn);
+});
+
+test.each([{transferGroupId:'forged-group'},{transferGroupId:null}])('caller payType does not create a transfer exception for an ordinary category',async(extra)=>{
+  const conn=makeConnection('debit');
+  await expect(DebitAccount.create({...input,payType:'转账',...extra},conn)).rejects.toThrow('本人有效的转账分类');
+  expect(conn.execute.mock.calls.some(([sql])=>/INSERT INTO account\s/.test(typeof sql==='string'?sql:sql.sql))).toBe(false);
+  expectCallerOwnsTransaction(conn);
+});
+
+test('a missing/foreign transfer category cannot authorize the legacy transfer path',async()=>{
+  const conn=makeConnection('debit',{categoryName:'转账',ownsCategory:false});
+  await expect(DebitAccount.create({...input,payType:'转账',transferGroupId:'forged-group'},conn)).rejects.toThrow('本人有效的转账分类');
+  expectCallerOwnsTransaction(conn);
+});
+
+test.each([null,'legacy-transfer-group'])('verified owner transfer category preserves legacy external and paired-leg semantics',async(transferGroupId)=>{
+  const conn=makeConnection('debit',{categoryName:'转账'});
+  await expect(DebitAccount.create({...input,payType:'转账',transferGroupId},conn)).resolves.toMatchObject({id:'record-id',amount:40});
+  expect(conn.execute).toHaveBeenCalledWith(expect.stringContaining('FROM bus_category WHERE id=? AND user_id=?'),['category-id',USER]);
+  expectCallerOwnsTransaction(conn);
+});
+
+test('credit creates reject transfer groups before acquiring a writable transaction',async()=>{
+  const conn=makeConnection('credit');
+  await expect(CreditAccount.create({...input,transferGroupId:'forged-group'},conn)).rejects.toThrow('信用卡普通消费不允许');
+  expect(conn.execute).not.toHaveBeenCalled();expectCallerOwnsTransaction(conn);
 });

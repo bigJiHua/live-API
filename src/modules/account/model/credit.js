@@ -46,6 +46,7 @@ class CreditAccount {
   static async create({ userId, direction, categoryId, payType, payMethod, amount, currency, exchangeRate, transDate, remark, cardId, transferGroupId }, executor = db) {
     const id = idUtils.billId();
     const now = String(Date.now());
+    if (transferGroupId) throw new Error('信用卡普通消费不允许携带转账分组');
     // 信用卡不能收入
     if (direction === 1) {
       throw new Error('信用卡不能登记收入，还款请使用储蓄卡');
@@ -71,7 +72,7 @@ class CreditAccount {
     const conn = ownsTransaction ? await db.getPool().getConnection() : executor;
     let finalAccountType;
     try {
-      if (ownsTransaction) await conn.beginTransaction();
+      if (ownsTransaction) {await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');await conn.beginTransaction();}
 
       // H9 审计：事务内行级锁（锁卡片；若属于共享池则锁池行），串行化并发消费。
       // 锁后再校验额度（读到的都是已提交的最新账本），避免两笔并发同时通过校验。
@@ -99,7 +100,9 @@ class CreditAccount {
         amount: amount,
         exchange_rate: exchangeRate || 1,
         currency: currency || 'CNY',
-        account_type: finalAccountType
+        account_type: finalAccountType,
+        strictOrdinary: true, category_id: categoryId, pay_type: payType,
+        trans_date: transDate, transfer_group_id: transferGroupId || null
       }, conn);
       if (!settlementResult.valid) {
         throw new Error(settlementResult.message);

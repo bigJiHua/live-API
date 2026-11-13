@@ -8,7 +8,7 @@ jest.mock('axios', () => ({ get: jest.fn(() => { throw new Error('Unexpected pro
 const { executeTool, getTools } = require('../../src/modules/ai/service/tools');
 const { validateTool, todayShanghai } = require('../../src/modules/ai/service/validation');
 const { getConfig, capabilities } = require('../../src/modules/ai/service/config');
-const { createTestService, createTestRepository, call, testEnv } = require('../helpers/aiFixture');
+const { createLegacyTestService: createTestService, createTestRepository, call, testEnv } = require('../helpers/aiFixture');
 const db = require('../../src/common/config/db');
 
 afterAll(() => {
@@ -20,7 +20,7 @@ afterAll(() => {
 
 const today = '2026-11-05';
 const range = { startDate: '2026-11-01', endDate: today };
-const input = { message: '昨天午饭花了32元，用支付宝付的', scene: 'draft', consent: true };
+const input = { message: '昨天午饭花了32元，使用余额账户，支付宝付款', scene: 'draft', consent: true };
 const proposal = { direction: 0, amount: '32.00', currency: 'CNY', transDate: today,
   categoryId: 'fixture_food', accountId: 'fixture_balance', payMethod: '支付宝', remark: '午饭' };
 const context = () => ({ scene: 'draft', userId: 'user_a', today, repository: createTestRepository() });
@@ -100,24 +100,31 @@ describe('AI boundary: model output never grants authority', () => {
   });
   test('failed tool sequence does not save partial drafts', async () => {
     const store = { save: jest.fn(), get: jest.fn() };
-    const chat = jest.fn().mockResolvedValueOnce(call('propose_transaction', proposal)).mockResolvedValueOnce(call('commit_transaction', {}));
+    const chat = jest.fn().mockResolvedValueOnce(call('propose_transaction', { ...proposal, accountId: null, categoryId: null })).mockResolvedValueOnce(call('commit_transaction', {}));
     await expect(service({ chat, draftStore: store }).run('a', input)).rejects.toThrow();
     expect(store.save).not.toHaveBeenCalled();
   });
   test('model repeated proposal rejected; no repeated formal writes exist', async () => {
-    const chat = jest.fn().mockResolvedValue(call('propose_transaction', proposal));
-    await expect(service({ chat }).run('a', input)).rejects.toThrow('一笔草稿');
+    const store = { save: jest.fn(), get: jest.fn() };
+    const chat = jest.fn(async messages => {
+      if (messages.at(-1).role !== 'tool') return call('list_record_choices', {});
+      const choices = JSON.parse(messages.at(-1).content), fields = { ...proposal, transDate: '2026-11-04',
+        accountId: choices.accounts[0].id, categoryId: choices.categories[0].id };
+      return { role: 'assistant', content: null, tool_calls: [call('propose_transaction', fields).tool_calls[0], call('propose_transaction', fields).tool_calls[0]] };
+    });
+    await expect(service({ chat, draftStore: store }).run('a', input)).rejects.toMatchObject({ code: 'AI_INVALID_INPUT' });
+    expect(chat).toHaveBeenCalledTimes(2); expect(store.save).not.toHaveBeenCalled();
   });
   test('repeated query loop is stopped within bounded model calls', async () => {
     const chat = jest.fn().mockResolvedValue(call('query_finance_summary', range));
-    await expect(service({ chat }).run('a', { ...input, scene: 'query' })).rejects.toMatchObject({ code: 'AI_TOOL_LIMIT' });
-    expect(chat).toHaveBeenCalledTimes(4);
+    await expect(service({ chat }).run('a', { ...input, message: '查询本月收支', scene: 'query' })).rejects.toMatchObject({ code: 'AI_LOOP_BLOCKED' });
+    expect(chat).toHaveBeenCalledTimes(2);
   });
   test('malformed JSON and malformed tool list fail before accessing repository', async () => {
-    const repository = { summary: jest.fn() };
+    const repository = { choices: createTestRepository().choices, summary: jest.fn() };
     const bad = call('query_finance_summary', range);
     bad.tool_calls[0].function.arguments = '{invalid';
-    await expect(service({ repository, chat: async () => bad }).run('a', { ...input, scene: 'query' })).rejects.toThrow('JSON');
+    await expect(service({ repository, chat: async () => bad }).run('a', { ...input, message: '查询本月收支', scene: 'query' })).rejects.toMatchObject({ code: 'AI_INVALID_INPUT' });
     expect(repository.summary).not.toHaveBeenCalled();
   });
   test('client cannot supply model history, identity, or a consent string', async () => {
@@ -187,12 +194,15 @@ describe('continuous chat and interactive draft isolation', () => {
     expect(discarded.status).toBe('discarded');
     await expect(s.editDraft('a', draft.id, { version: 4, fields: proposal })).rejects.toMatchObject({ code: 'AI_DRAFT_DISCARDED' });
   });
-  test('incomplete draft cannot be reviewed; edits retain its expiry and require review', async () => {
+  test('incomplete input cannot be reviewed; local field completion creates a new pending draft with no model request', async () => {
     const s = service();
-    const { draft } = await s.run('a', { ...chatInput, message: '记账35元' });
-    await expect(s.actOnDraft('a', draft.id, { version: 1, action: 'review' })).rejects.toThrow('补齐');
-    const edited = await s.editDraft('a', draft.id, { version: 1, fields: proposal });
-    expect(edited.expiresAt).toBe(draft.expiresAt);
-    expect(edited.status).toBe('pending');
+    const result = await s.run('a', { ...chatInput, message: '记账35元' });
+    expect(result.draft).toBeNull(); expect(result.inputCandidate.fields.amount).toBe('35');
+    expect(result.request.providerCalls).toBe(0);
+    await expect(s.actOnDraft('a', result.inputCandidate.id, { version: 1, action: 'review' })).rejects.toMatchObject({ status: 404 });
+    const completed = await s.createLocalTransactionDraft('a', { requestId: require('crypto').randomUUID(),
+      sourceCandidateId: result.inputCandidate.id, conversationId: result.conversationId, fields: { ...proposal, amount: '35' } });
+    expect(completed.request.providerCalls).toBe(0); expect(completed.draft.status).toBe('pending');
+    expect(completed.draft.sourceCandidateId).toBe(result.inputCandidate.id);
   });
 });

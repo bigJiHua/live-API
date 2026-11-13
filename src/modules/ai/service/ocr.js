@@ -38,7 +38,11 @@ function validateOcrResult(input) {
   if (error) throw new AiError('图片识别结果格式不完整，请换清晰截图重试', 502, 'AI_OCR_INVALID_RESULT');
   const redact = text => typeof text === 'string' ? text.replace(/data:[^\s]+|https?:\/\/[^\s]+/gi, '[已隐藏链接]')
     .replace(/(?:\d[\s-]?){7,}(?:[Xx])?/g, token => '****' + token.replace(/[\s-]/g, '').slice(-4)) : text;
-  return { ...value, warnings: value.warnings.map(redact), items: value.items.map(item => ({ ...item,
+  // Warnings are untrusted model text. The conflict verdict is owned solely by
+  // the server, which replaces the whole warning list (see service/index.js).
+  // A fixed-phrase substitution here cannot block paraphrases such as
+  // "已按图片金额提取", so no wording rewrite is attempted at this stage.
+  return { ...value, warnings: value.warnings.map(text => redact(text)), items: value.items.map(item => ({ ...item,
     merchant: redact(item.merchant), accountHint: redact(item.accountHint), remark: redact(item.remark),
     categoryHint: redact(item.categoryHint), evidence: { ...item.evidence,
       // Evidence date and amount accept only short numeric/date/currency text; no identifiers or URLs.
@@ -99,7 +103,10 @@ transactionKind:ordinary/transfer/repayment/refund/installment/investment/balanc
 warnings是最多10条简短中文问题或不确定性说明；超20条只提取前20条并truncated=true；空白、非财务图片或无法辨认返回unknown+空items+原因。
 不要自行计算或填入账单没有展示的金额。`;
 
-async function recognizePaymentImage(config, image, today, message = '') {
+async function recognizePaymentImage(config, image, today, message = '', control = {}) {
+  const { startProviderTrace } = require('./diagnostics');
+  const timeoutMs = config.providerTimeoutMs || 60000;
+  const trace = startProviderTrace({ ...config, model: ocrModel(config) }, '/chat/completions:ocr', timeoutMs);
   let response;
   try {
     response = await axios.post(`${config.baseUrl}/chat/completions`, {
@@ -109,14 +116,24 @@ async function recognizePaymentImage(config, image, today, message = '') {
           { type: 'image_url', image_url: { url: image.dataUrl } }] }],
       response_format: { type: 'json_object' }, stream: false, max_tokens: 8192,
     }, { headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 60000, maxRedirects: 0, maxContentLength: 1024 * 1024, maxBodyLength: 4 * 1024 * 1024 });
+      timeout: timeoutMs, maxRedirects: 0, maxContentLength: 1024 * 1024, maxBodyLength: 4 * 1024 * 1024,
+      ...(control.signal ? { signal: control.signal } : {}) });
   } catch (error) {
     const status = error?.response?.status;
-    throw new AiError(status === 401 || status === 403 ? '图片识别Key无效或无权限，请检查连接设置' :
-      status === 402 ? 'DeepSeek额度不足，无法识别图片' :
+    const cancelled = control.signal?.aborted || error?.code === 'ERR_CANCELED';
+    const timedOut = error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT';
+    const failure = new AiError(cancelled ? '图片识别已停止，请读取本次请求回执' : timedOut ? '图片识别供应商响应超时，请核查服务日志后重试' :
+      status === 401 || status === 403 ? '图片识别Key无效或无权限，请检查连接设置' :
+      status === 402 ? 'AI 提供方额度不足，无法识别图片' :
       status === 400 ? '当前供应商或模型未接受图片输入，请使用支持视觉的模型' :
-      '图片识别服务暂时不可用，请稍后重试', 502, 'AI_OCR_PROVIDER_FAILED');
+      '图片识别服务暂时不可用，请稍后重试', cancelled ? 499 : timedOut ? 504 : 502,
+      cancelled ? 'AI_REQUEST_CANCELLED' : timedOut ? 'AI_OCR_PROVIDER_TIMEOUT' : 'AI_OCR_PROVIDER_FAILED');
+    failure.causeCode = error?.code || error?.name;
+    failure.providerStatus = status || null;
+    failure.diagnostics = trace.fail(error);
+    throw failure;
   }
+  try {
   const choice = response.data?.choices?.[0];
   if (choice?.finish_reason !== 'stop' || choice.message?.role !== 'assistant' ||
       typeof choice.message.content !== 'string' || choice.message.content.length > 50000 ||
@@ -124,7 +141,10 @@ async function recognizePaymentImage(config, image, today, message = '') {
   let value;
   try { value = JSON.parse(choice.message.content); }
   catch (_) { throw new AiError('图片识别未返回有效JSON，请重试', 502, 'AI_OCR_INVALID_RESULT'); }
-  return validateOcrResult(value);
+  const result = validateOcrResult(value);
+  trace.finish(response.data?.usage);
+  return result;
+  } catch (error) { error.diagnostics = trace.fail(error); throw error; }
 }
 
 module.exports = { prepareOcrImage, recognizePaymentImage, validateOcrResult, ocrModel, MAX_DATA_URL };

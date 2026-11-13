@@ -97,6 +97,14 @@ class AccountSettlement {
    * - 储蓄卡（debit）：需要验证余额
    */
   static async validate(record, executor = db) {
+    // Only explicitly identified ordinary CNY creates enter the new shared
+    // strict path. Dedicated transfer/repayment/reversal/FX services retain
+    // their existing accounting contract and cannot be inferred by amount.
+    // Legacy virtual accounts (xxxx/yyyy) keep the strict gate on purpose:
+    // a missing card row means the account has not been initialized and must
+    // not be treated as usable funds (see aiAccountExecutor boundary test).
+    const strict = require('../../../common/services/financialPreflight');
+    if (strict.isOrdinaryRecord(record)) return strict.validateOrdinaryRecord(record, executor);
     const { card_id, user_id, direction, amount, exchange_rate, currency, excludeAmountCNY = 0 } =
       record;
     // 转换后的金额（人民币）

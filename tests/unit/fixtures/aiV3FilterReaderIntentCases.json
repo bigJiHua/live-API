@@ -1,0 +1,310 @@
+{
+  "F01": {
+    "datasetId": "finance-monthly",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E02": {
+    "datasetId": "finance-categories",
+    "message": "在6月份按分类统计的收入和支出金额中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F02": {
+    "datasetId": "finance-categories",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E03": {
+    "datasetId": "finance-transactions",
+    "message": "在6月份收支流水明细中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F03": {
+    "datasetId": "finance-transactions",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E04": {
+    "datasetId": "finance-daily",
+    "message": "在6月份逐日收入与支出的每日汇总中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F04": {
+    "datasetId": "finance-daily",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E05": {
+    "datasetId": "account-balances",
+    "message": "在当前已保存的各账户余额和币种中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F05": {
+    "datasetId": "account-balances",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E06": {
+    "datasetId": "card-cards",
+    "message": "在当前我的卡片清单和账单日、还款日、登记到期月份中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F06": {
+    "datasetId": "card-cards",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E07": {
+    "datasetId": "card-counts",
+    "message": "在当前我的全部卡片按类型分别有多少张中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F07": {
+    "datasetId": "card-counts",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E08": {
+    "datasetId": "card-monthlyConsumption",
+    "message": "在最近三个月所有卡片逐卡逐月的消费流水金额中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F08": {
+    "datasetId": "card-monthlyConsumption",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E09": {
+    "datasetId": "card-bills",
+    "message": "在2026年9月至11月已保存的信用卡账单快照、本期账单和待还金额中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F09": {
+    "datasetId": "card-bills",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E10": {
+    "datasetId": "card-repayments",
+    "message": "在2026年9月1日至11月9日已保存的信用卡还款历史中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F10": {
+    "datasetId": "card-repayments",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E11": {
+    "datasetId": "card-pools",
+    "message": "在当前已保存的共享额度池配置中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F11": {
+    "datasetId": "card-pools",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E12": {
+    "datasetId": "budget-plans",
+    "message": "在2026年11月1日至9日已保存的预算计划和登记使用额中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F12": {
+    "datasetId": "budget-plans",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E13": {
+    "datasetId": "todo-events",
+    "message": "在2026年11月1日至9日保存的待办日程中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F13": {
+    "datasetId": "todo-events",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E14": {
+    "datasetId": "work-salary",
+    "message": "在2026年11月1日至9日已登记的每日工资流水中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F14": {
+    "datasetId": "work-salary",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E15": {
+    "datasetId": "work-rules",
+    "message": "在当前保存的工资规则、基本工资和时薪参考中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F15": {
+    "datasetId": "work-rules",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E16": {
+    "datasetId": "asset-snapshots",
+    "message": "在2026年11月1日至9日的流动资产系统快照中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F16": {
+    "datasetId": "asset-snapshots",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E17": {
+    "datasetId": "asset-registers",
+    "message": "在2026年11月1日至9日的手工资产登记中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F17": {
+    "datasetId": "asset-registers",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E18": {
+    "datasetId": "asset-composition",
+    "message": "在当前已保存账户余额按账户类型及币种的资产组成中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F18": {
+    "datasetId": "asset-composition",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E19": {
+    "datasetId": "asset-comparison",
+    "message": "在2026年11月1日至9日同日手工资产登记与系统保存值对照中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F19": {
+    "datasetId": "asset-comparison",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E20": {
+    "datasetId": "fixedAsset-saved",
+    "message": "在当前已保存的固定资产账面价值、二手价和折旧状态中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F20": {
+    "datasetId": "fixedAsset-saved",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E21": {
+    "datasetId": "fund-holdings",
+    "message": "在当前基金登记的本金、已登记收益合计和登记市值中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F21": {
+    "datasetId": "fund-holdings",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E22": {
+    "datasetId": "fund-history",
+    "message": "在2026年11月1日至9日基金的每日收益与本金增量登记历史中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F22": {
+    "datasetId": "fund-history",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "E23": {
+    "datasetId": "installment-plans",
+    "message": "在2026年11月1日至9日分期计划与范围内已保存期次状态中，只查询文本里包含“ZZZERO_全场景无匹配_987”这个字面片段的记录，最多展示3条。没有匹配就明确说明。",
+    "expectFilter": "ZZZERO_全场景无匹配_987",
+    "maxRows": 3
+  },
+  "F23": {
+    "datasetId": "installment-plans",
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "expectFilter": "",
+    "maxRows": 1
+  },
+  "C05": {
+    "datasetId": "account-balances",
+    "message": "延续刚才当前已保存账户余额查询，范围不变，只筛选文本包含“CNY”的记录，最多展示10条，以账户名称作横轴、已保存余额作纵轴给柱状图，缺快照保持未知。",
+    "expectFilter": "CNY",
+    "chartExpected": {
+      "type": "bar",
+      "xKey": "name",
+      "yKeys": [
+        "balance"
+      ]
+    },
+    "maxRows": 10
+  },
+  "C18": {
+    "datasetId": "asset-composition",
+    "message": "延续刚才当前账户资产组成查询，范围不变，只筛选文本包含“CNY”的组，最多展示50条，以账户类型和已保存非信用正资产值给组成饼图。缺失币种的组不加入，不把负债或额度当正资产。",
+    "expectFilter": "CNY",
+    "chartExpected": {
+      "type": "pie",
+      "xKey": "type",
+      "yKeys": [
+        "positiveAssets"
+      ]
+    },
+    "maxRows": 50
+  },
+  "X04": {
+    "datasetId": "fund-history",
+    "message": "查询2026年1月1日至11月9日基金收益登记历史，只查询名称字面包含“天天盈2号”的记录，最多展示50条。告诉我匹配总数，保留最早记录的小数4位，不要把原来前100行窗口当全部。",
+    "expectFilter": "天天盈2号",
+    "maxRows": 50
+  },
+  "X18": {
+    "datasetId": "todo-events",
+    "message": "只读查询2026年11月1日至9日待办内容字面包含“删除”的记录。只是查记录，不删除、不修改、不完成任何待办，不生成操作提案。",
+    "expectFilter": "删除",
+    "maxRows": 10
+  }
+}

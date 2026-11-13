@@ -17,10 +17,12 @@ const range = { startDate: date.required(), endDate: date.required() };
 const requestSchema = Joi.object({ message: Joi.string().trim().min(1).max(1500).required(),
   scene: Joi.string().valid('query', 'draft', 'chat').required(), consent: Joi.boolean().required(),
   conversationId: Joi.string().guid({ version: 'uuidv4' }),
+  requestId: Joi.string().guid({ version: 'uuidv4' }),
   connectionId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
 const ocrRequestSchema = Joi.object({ image: Joi.object({ dataUrl: Joi.string().max(2 * 1024 * 1024).required() }).unknown(false).required(),
   message: Joi.string().trim().max(1500).allow('').default(''), consent: Joi.boolean().required(),
   conversationId: Joi.string().guid({ version: 'uuidv4' }),
+  requestId: Joi.string().guid({ version: 'uuidv4' }),
   connectionId: Joi.string().guid({ version: 'uuidv4' }) }).unknown(false);
 const toolSchemas = Object.freeze({
   query_finance_summary: Joi.object(range).unknown(false),
@@ -54,7 +56,15 @@ function validateTool(name, input, today = todayShanghai()) {
 const draftEditSchema = Joi.object({ version: Joi.number().integer().min(1).required(),
   fields: toolSchemas.propose_transaction.required() }).unknown(false);
 const draftActionSchema = Joi.object({ version: Joi.number().integer().min(1).required(),
-  action: Joi.string().valid('review', 'discard').required() }).unknown(false);
+  action: Joi.string().valid('review', 'discard').required(),
+  riskAcknowledgement: Joi.object({ fieldsDigest: Joi.string().length(64).required(), policyVersion: Joi.string().max(80).required(),
+    riskDigest: Joi.string().length(64).required(), confirmedAmount: Joi.string().max(30) }).unknown(false) }).unknown(false);
 // 追加163：入账提交只收 ID+版本（铁律1：不收任何业务字段 ⇒ 不构成第二写入口）
 const commitSchema = Joi.object({ version: Joi.number().integer().min(1).required() }).unknown(false);
-module.exports = { validate, requestSchema, ocrRequestSchema, validateTool, todayShanghai, draftEditSchema, draftActionSchema, commitSchema };
+const financialFields = Joi.object({amount:Joi.string().max(40).allow(null),direction:Joi.number().valid(0,1).allow(null),currency:Joi.string().max(3).allow(null),
+  transDate:date.allow(null),accountId:id.allow(null),categoryId:id.allow(null),payMethod:Joi.string().max(20).allow(null),remark:Joi.string().max(255).allow('',null)}).unknown(false);
+const financialRequestSchema = Joi.object({message:Joi.string().trim().max(1500).allow(''),fields:financialFields,
+  conversationId:Joi.string().guid({version:'uuidv4'}),sourceCandidateId:Joi.string().guid({version:'uuidv4'})}).or('fields','message','sourceCandidateId').unknown(false);
+const localDraftRequestSchema = financialRequestSchema.keys({requestId:Joi.string().guid({version:'uuidv4'}).required()});
+module.exports = { validate, requestSchema, ocrRequestSchema, validateTool, todayShanghai, draftEditSchema, draftActionSchema, commitSchema,
+  financialRequestSchema,localDraftRequestSchema };

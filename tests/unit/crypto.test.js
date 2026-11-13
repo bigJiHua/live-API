@@ -1,26 +1,14 @@
-// 工具函数测试示例
-const { encrypt, decrypt } = require('../../src/common/utils/crypto');
+const { generateRandomString, generateUUID } = require('../../src/common/utils/crypto');
 
-describe('工具函数测试', () => {
-  describe('加密/解密', () => {
-    test('encrypt 应该返回加密后的字符串', () => {
-      const result = encrypt('test-string');
-      expect(result).toBeDefined();
-      expect(typeof result).toBe('string');
-    });
-
-    test('decrypt 应该能解密加密后的字符串', () => {
-      const original = 'hello-world';
-      const encrypted = encrypt(original);
-      const decrypted = decrypt(encrypted);
-      expect(decrypted).toBe(original);
-    });
-
-    test('相同的输入应该产生不同的加密结果（因为有随机 salt）', () => {
-      const input = 'test';
-      const result1 = encrypt(input);
-      const result2 = encrypt(input);
-      expect(result1).not.toBe(result2);
-    });
+describe('General identifier utilities', () => {
+  test('random identifiers respect length and the safe alphabet', () => {
+    expect(generateRandomString()).toMatch(/^[A-Za-z0-9]{32}$/);
+    expect(generateRandomString(12)).toMatch(/^[A-Za-z0-9]{12}$/);
+    expect(generateRandomString(0)).toBe('');
+  });
+  test('UUIDs carry the version and variant required by API contracts', () => {
+    const values = Array.from({ length: 100 }, () => generateUUID());
+    for (const value of values) expect(value).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    expect(new Set(values).size).toBe(values.length);
   });
 });

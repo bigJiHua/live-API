@@ -15,8 +15,12 @@ class CreditController {
    */
   async create(req, res) {
     try {
+      const input = req.body.data || req.body;
+      if (input.transferGroupId) {
+        return res.status(400).json({status:400,code:'ACCOUNT_TRANSFER_GROUP_FORBIDDEN',message:'信用卡普通消费不允许携带转账分组'});
+      }
       const transaction = await CreditAccount.create({
-        ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
+        ...input, // 双路径兼容明文/加密请求
         userId: req.userId, // 身份只能来自鉴权结果，禁止请求字段覆盖
       });
 

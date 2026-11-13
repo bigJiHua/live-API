@@ -762,10 +762,13 @@ CREATE TABLE IF NOT EXISTS `ai_conversation` (
   `id` CHAR(36) NOT NULL COMMENT '会话UUID',
   `user_id` VARCHAR(64) NOT NULL,
   `latest_draft_id` VARCHAR(64) NULL COMMENT '最近草稿ID(上下文追问用)',
+  `session_kind` ENUM('legacy','default','manual') NOT NULL DEFAULT 'legacy',
+  `session_day` DATE NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_user_updated` (`user_id`,`updated_at`)
+  KEY `idx_user_updated` (`user_id`,`updated_at`),
+  UNIQUE KEY `uk_user_default_day` (`user_id`,`session_kind`,`session_day`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='AI会话元数据(历史记录)';
 
 CREATE TABLE IF NOT EXISTS `ai_message` (
@@ -782,8 +785,240 @@ CREATE TABLE IF NOT EXISTS `ai_message` (
   KEY `idx_user` (`user_id`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='AI聊天消息(历史持久化)';
 
+-- 019: AI 业务工作区和单次请求保护（2026-11-06）。
+-- 只增加 AI 表/会话锚点；不插入样例，不清理正式账务，不重算金融数据。
+-- CREATE IF NOT EXISTS；重复列/索引由 migrationRunner 的幂等规则跳过。
+-- MySQL 5.7.8+，所有执行回执持久保留，requestId 超时后也不能自动重放。
+
+CREATE TABLE IF NOT EXISTS `ai_analysis_preview` (
+  `id` VARCHAR(50) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `digest` CHAR(64) NOT NULL,
+  `payload` MEDIUMTEXT NOT NULL COMMENT '加密JSON：授权快照、随机引用map、原话和供应商指纹',
+  `created_at` BIGINT NOT NULL,
+  `expires_at` BIGINT NOT NULL,
+  `approved_at` BIGINT NULL,
+  `request_id` CHAR(36) NULL COMMENT '一次消费，禁止换请求编号重发同一预览',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_expires` (`user_id`,`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI范围授权预览，不保存图片';
+
+CREATE TABLE IF NOT EXISTS `ai_business_proposal` (
+  `id` VARCHAR(50) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `kind` VARCHAR(40) NOT NULL,
+  `payload` JSON NOT NULL,
+  `source` VARCHAR(20) NOT NULL,
+  `conversation_id` VARCHAR(50) NULL,
+  `preview_id` VARCHAR(50) NULL,
+  `status` ENUM('pending','reviewed','committed','discarded') NOT NULL DEFAULT 'pending',
+  `version` INT NOT NULL DEFAULT 1,
+  `expires_at` BIGINT NOT NULL,
+  `receipt` JSON NULL,
+  `target_snapshot` JSON NULL,
+  `created_at` VARCHAR(20) NOT NULL,
+  `updated_at` VARCHAR(20) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_status` (`user_id`,`status`),
+  KEY `idx_preview` (`preview_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='独立AI业务提案，正式执行只收ID和版本';
+
+CREATE TABLE IF NOT EXISTS `ai_background_job` (
+  `id` VARCHAR(50) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `proposal_id` VARCHAR(50) NOT NULL,
+  `status` ENUM('queued','running','succeeded','failed') NOT NULL DEFAULT 'queued',
+  `worker_id` VARCHAR(64) NULL,
+  `receipt` JSON NULL,
+  `error_message` VARCHAR(255) NULL,
+  `created_at` VARCHAR(20) NOT NULL,
+  `updated_at` VARCHAR(20) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_proposal` (`proposal_id`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='人工确认后固定系统备份任务，不自动重试';
+
+CREATE TABLE IF NOT EXISTS `ai_request_run` (
+  `id` CHAR(36) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `lane` VARCHAR(32) NOT NULL,
+  `input_digest` CHAR(64) NOT NULL,
+  `status` ENUM('running','completed','failed') NOT NULL,
+  `provider_calls` INT NOT NULL DEFAULT 0,
+  `max_provider_calls` INT NOT NULL DEFAULT 1,
+  `created_at` BIGINT NOT NULL,
+  `deadline_at` BIGINT NOT NULL,
+  `expires_at` BIGINT NOT NULL,
+  `result_payload` MEDIUMTEXT NULL COMMENT '加密结果，超时只读回执不重发',
+  `error_code` VARCHAR(64) NULL,
+  PRIMARY KEY (`user_id`,`id`),
+  KEY `idx_expires` (`expires_at`),
+  KEY `idx_user_created` (`user_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI持久去重和每轮供应商调用硬预算';
+
+CREATE TABLE IF NOT EXISTS `ai_request_lane` (
+  `user_id` VARCHAR(64) NOT NULL,
+  `active_request_id` VARCHAR(64) NULL,
+  `locked_until` BIGINT NOT NULL DEFAULT 0,
+  `request_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `window_start` BIGINT NOT NULL DEFAULT 0,
+  `updated_at` VARCHAR(20) NULL,
+  PRIMARY KEY (`user_id`),
+  KEY `idx_locked_until` (`locked_until`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='跨进程用户并发锁和分钟限流';
+
+
+-- 020: transactional input candidates; no financial test records or image bytes.
+CREATE TABLE IF NOT EXISTS `ai_transaction_candidate` (
+  `id` VARCHAR(50) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `source` VARCHAR(20) NOT NULL,
+  `conversation_id` VARCHAR(50) NULL,
+  `request_id` CHAR(36) NULL,
+  `source_fingerprint` CHAR(64) NULL COMMENT '本人范围内相同来源去重，不保存图片',
+  `input_digest` CHAR(64) NOT NULL,
+  `payload` MEDIUMTEXT NOT NULL COMMENT '加密JSON：候选字段、原话/识别短证据和来源',
+  `status` ENUM('pending','consumed','discarded','failed') NOT NULL DEFAULT 'pending',
+  `draft_id` CHAR(36) NULL,
+  `created_at` BIGINT NOT NULL,
+  `expires_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_candidate_request` (`user_id`,`request_id`),
+  UNIQUE KEY `uk_candidate_source` (`user_id`,`source_fingerprint`),
+  KEY `idx_candidate_expiry` (`user_id`,`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='交易补充候选，不是可执行草稿；无图像';
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+
+-- D-027（2026-11-07）：AI 数据授权白名单，跟账号走；每用户一行，撤销保留审计
+CREATE TABLE IF NOT EXISTS `ai_data_grant` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` VARCHAR(64) NOT NULL,
+  `provider_host` VARCHAR(120) NOT NULL DEFAULT '' COMMENT '授权绑定的供应商主机，换连接需重新授权',
+  `domains` TEXT NOT NULL COMMENT 'JSON 数组：允许 AI 读取的业务域白名单',
+  `granted_at` BIGINT NOT NULL,
+  `revoked_at` BIGINT NULL COMMENT '非空=已撤回（保留行作审计证物）',
+  `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_grant_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 数据授权白名单；预览快照 digest 才是逐消息授权证物';
+
+-- D-028（2026-11-07）：AI 连接设置持久化——加密 Key+模型跟账号走，多端（PC/手机局域网）共享
+CREATE TABLE IF NOT EXISTS `ai_provider_setting` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` VARCHAR(64) NOT NULL,
+  `provider_host` VARCHAR(200) NOT NULL COMMENT '规范化 API 地址（OpenAI 兼容 base）',
+  `model` VARCHAR(120) NOT NULL,
+  `api_key_cipher` TEXT NOT NULL COMMENT 'enc.v1 AES-256-GCM 加密的 API Key，密钥不出服务端',
+  `key_fingerprint` CHAR(16) NOT NULL COMMENT 'Key 的 sha256 前16位，供多端一致性核对，不泄露 Key',
+  `connection_id` CHAR(36) NOT NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_psetting_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 连接设置持久化；密文落库，GET 永不回传';
+
+-- 2026-11-08：多接入商——同一账号可保存多家 OpenAI 兼容接入商；Key 仍加密落库。
+-- 旧的 ai_provider_setting 保留仅作为迁移来源（023 会搬迁到本表）。
+CREATE TABLE IF NOT EXISTS `ai_provider_profile` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` VARCHAR(64) NOT NULL,
+  `connection_id` CHAR(36) NOT NULL COMMENT '接入商连接ID；改地址/Key/模型时轮换',
+  `name` VARCHAR(60) NOT NULL COMMENT '用户可读名称',
+  `provider_host` VARCHAR(200) NOT NULL COMMENT '规范化 API 地址（OpenAI 兼容 base）',
+  `model` VARCHAR(120) NOT NULL,
+  `api_key_cipher` TEXT NOT NULL COMMENT 'enc.v1 加密的 API Key，GET 永不回传',
+  `key_fingerprint` CHAR(16) NOT NULL COMMENT 'Key 的 sha256 前16位，供多端核对',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_profile_conn` (`user_id`, `connection_id`),
+  UNIQUE KEY `uk_profile_name` (`user_id`, `name`),
+  KEY `idx_profile_user_active` (`user_id`, `is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 接入商多配置；Key 加密落库，GET 永不回传';
+
+-- 追加164（2026-11-07）：AI 全链路审计日志（思考/调用/工具/门控 100% 追溯，保留期90天）
+CREATE TABLE IF NOT EXISTS `ai_call_log` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` VARCHAR(64) NOT NULL,
+  `request_id` CHAR(36) NULL COMMENT '本轮守卫 requestId（meta 调用可为空）',
+  `conversation_id` VARCHAR(50) NULL,
+  `lane` VARCHAR(32) NOT NULL COMMENT 'legacy-chat/business-chat/ocr/local-draft/models/balance/settings',
+  `phase` VARCHAR(32) NOT NULL COMMENT 'provider/tool/gate/preview/meta/commit/evidence-recovery',
+  `provider_host` VARCHAR(200) NULL,
+  `model` VARCHAR(120) NULL,
+  `thinking_enabled` TINYINT(1) NOT NULL DEFAULT 0,
+  `tool_name` VARCHAR(64) NULL,
+  `request_payload` MEDIUMTEXT NULL COMMENT 'JSON：messages/工具参数/门控入参（应用层截断64KB）',
+  `response_payload` MEDIUMTEXT NULL COMMENT 'JSON：content/reasoning_content/tool_calls/结果（应用层截断64KB）',
+  `usage` JSON NULL COMMENT 'prompt_tokens/completion_tokens/total_tokens',
+  `duration_ms` INT NULL,
+  `status` ENUM('ok','error') NOT NULL,
+  `error_code` VARCHAR(64) NULL,
+  `http_status` SMALLINT NULL,
+  `origin` VARCHAR(16) NULL COMMENT 'model/user/system（工具发起方）',
+  `created_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_created` (`user_id`,`created_at`),
+  KEY `idx_request` (`request_id`),
+  KEY `idx_conversation` (`conversation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 全链路审计日志；凭据永不入表';
+
+-- 追加164（2026-11-07）：AI 用户偏好（思考开关；与 Key 配置解耦）
+CREATE TABLE IF NOT EXISTS `ai_user_preference` (
+  `user_id` VARCHAR(64) NOT NULL,
+  `thinking_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '思考能力开关（会话偏好优先于 env AI_THINKING）',
+  `web_search_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '联网搜索开关（§3b 默认关：收费能力须显式开启）',
+  `daily_provider_calls` INT UNSIGNED DEFAULT NULL COMMENT '本人每日模型调用额度；NULL=站点默认',
+  `max_usage_tokens` INT UNSIGNED DEFAULT NULL COMMENT '本人单轮累计 token 上限；NULL=站点默认',
+  `max_output_tokens` VARCHAR(12) DEFAULT NULL COMMENT '本人每次输出上限；max 或整数；NULL=站点默认',
+  `provider_timeout_ms` INT UNSIGNED DEFAULT NULL COMMENT '本人单次模型请求超时毫秒；NULL=站点默认',
+  `turn_timeout_ms` INT UNSIGNED DEFAULT NULL COMMENT '本人整轮处理超时毫秒；NULL=站点默认',
+  `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 用户偏好；env 级供应商同样生效';
+
+-- 2026-11-10：跨设备聊天活动；只同步状态，不授权模型或业务执行。
+CREATE TABLE IF NOT EXISTS `ai_chat_activity` (
+  `user_id` VARCHAR(64) NOT NULL,
+  `request_id` CHAR(36) NOT NULL,
+  `conversation_id` VARCHAR(50) NOT NULL,
+  `execution_token` CHAR(36) NOT NULL,
+  `message_payload` MEDIUMTEXT NOT NULL COMMENT 'Encrypted original utterance; no image bytes',
+  `status` VARCHAR(16) NOT NULL,
+  `stage` VARCHAR(32) NOT NULL,
+  `error_code` VARCHAR(64) NULL,
+  `notice` VARCHAR(1000) NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  `deadline_at` BIGINT NOT NULL,
+  PRIMARY KEY (`user_id`,`request_id`),
+  KEY `idx_chat_activity` (`user_id`,`conversation_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='Cross-device queued/running chat state; never authorizes execution';
+
+-- 2026-11-13：AI 站点默认配置（单行），新建库初始化实际默认值。
+-- 用户在 ai_user_preference 保存本人预算与超时，可提高额度；优先于站点默认。
+-- 站点列 NULL 保留 env 回退兼容；用户保存立即更新本进程，跨进程缓存按请求刷新。
+-- 值仍受 config.js/modelContext 边界校验（越界拒绝或静默回落，与 env 非法同路径）。
+CREATE TABLE IF NOT EXISTS `ai_config` (
+  `id` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `daily_provider_calls` INT UNSIGNED DEFAULT 10000 COMMENT 'AI_V3_DAILY_PROVIDER_CALLS 默认；NULL=env 缺省',
+  `max_usage_tokens` INT UNSIGNED DEFAULT 1000000 COMMENT 'AI_V3_MAX_USAGE_TOKENS 默认；NULL=env 缺省',
+  `max_output_tokens` VARCHAR(12) DEFAULT 'max' COMMENT 'AI_V3_MAX_OUTPUT_TOKENS 默认，max 或整数；NULL=env 缺省',
+  `provider_timeout_ms` INT UNSIGNED DEFAULT 105000 COMMENT 'AI_PROVIDER_TIMEOUT_MS 默认；NULL=env 缺省',
+  `turn_timeout_ms` INT UNSIGNED DEFAULT 300000 COMMENT 'AI_V3_TURN_TIMEOUT_MS 默认；NULL=env 缺省',
+  `history_tokens` INT UNSIGNED DEFAULT NULL COMMENT 'AI_CONTEXT_HISTORY_TOKENS 覆盖（§10 历史上下文预算）；NULL=env 缺省',
+  `search_daily_calls` INT UNSIGNED DEFAULT NULL COMMENT '全站每日搜索外发上限；NULL=AI_WEB_SEARCH_DAILY_CALLS',
+  `search_usage_day` CHAR(10) DEFAULT NULL COMMENT 'Asia/Shanghai 搜索计费日',
+  `search_calls_used` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '当日搜索外发预占数（失败不退还）',
+  `updated_at` BIGINT NOT NULL COMMENT '最后修改毫秒时间，供运维核对',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `chk_ai_config_single` CHECK (`id` = 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='AI 站点级运营配置（单行）；用户可写面之外，NULL=跟随 env 缺省';
+
+INSERT IGNORE INTO `ai_config` (`id`, `updated_at`) VALUES (1, CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED));

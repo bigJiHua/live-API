@@ -263,3 +263,140 @@ API/Web：`feat/deepseek-ai-test`。本轮保留原有未提交改动与用户�
 - 实际截图：`D:/Code/live/temp/ai-chat-ux-2026-11-06.png`。
 
 本轮只调整 Web 展示与交互反馈，未改 API 写入链路、草稿版本/有效期、人工入账确认或权限规则。没有提交正式流水或删除既有数据。
+
+---
+
+## 来源：CHANGELOG_2026-11-06_AI_BUSINESS_IMPLEMENTATION.md
+
+# 2026-11-06 AI 业务实施与验收记录
+
+负责人在PLAN规划后直接授权实施，并明确“一定一定要阻止循环请求”。本轮依据计划`AI-OPEN-20261106`版本1.1增加R-025/A-023，源码仍在API/Web `feat/ai-assistant`工作区；未提交、未部署，不宣称22项任务全部完成。当前状态以[PLAN台账](../../Docs/docs/ai/PLAN/task-tracker.md)为准，来源/文件证据见[溯源](../../Docs/docs/ai/PLAN/traceability.md)。
+
+## 来源和保留基线
+
+API起点`35fae48a9d6c061e12475c2a75345ffcd22c312d`，Web起点`a842dd179e9251620e469abd1890af1144db4205`，两端分支`feat/ai-assistant`。负责人原报告保留，冻结快照79,317字节、SHA-256 `f727a43627a07528fb8c02563e485ddea3d74d436b06464e88ee9f7a6a5f640d`；来源manifest仍描述版本1.0规划，不回写原hash。保留Web Login.vue用户修改与负责人决定保留的旧验收支出。
+
+## 已落地行为
+
+- v2服务器prepare获准范围→安全预览→一次DeepSeek JSON答复/最多一个提案。新聊天最多1次provider，OCR最多1次，legacy兼容至多4次且重复工具立即停止。没有tool loop、输出修复或自动重试。
+- 持久requestId claim/user lane/调用计数和回执，跨进程并发互斥、每分钟6次、重入拒绝、超时abort；同预览CAS单次消费，换requestId也不再发。断线恢复仅读回执；Web挂载/恢复/设置变化不自动发模型。
+- 十域纯SELECT：账本、余额、信用卡、预算、待办、工资、资产、固定资产、基金、分期。CNY至分/外币收益四位；缺快照/汇率明确不完整。补逐卡/月CNY消费/类型数量/到期月份/配置还款日、香港/一日游固定LIKE、type+currency余额组成。旧资产总额无币种证据，标unverified、同日差额null；读取不补写、还款、对账、分期入账、作废或折旧。
+- 全出口随机refs；v2预览≤64KiB/每dataset≤100行/≤12个月，map15分钟加密存档，digest绑定scope/指纹/连接/会话/原话/map。预览与实际外发同包，最多4条500字用户历史和候选同样展示。旧v1历史/最近草稿/工具结果隐藏真实ID和联系方式，只反解本轮refs。
+- 未消费preview可服务器撤销，approved_at=-1；审批/外发/ref反解/消费CAS拒绝撤销竞态，已发不能撤回。本人过期payload/refMap以100行有界批次清理，保留id/digest/批准/request证据；历史未知UUID/旧refs/sk-key文本通用隐藏，typed金额和新refs不误遮。
+- 类型化提案与白名单固定执行器、版本核对/目标快照、人工ID+version执行和同事务回执。支持预算、todo、私有日记、卡alias/status、固定资产名称/品类和可分离回收/恢复/永久删除、基金明确日收益、管理员固定备份提案。
+- 聊天内数据表/安全图/提案卡、每日default唯一锚点、manual新会话、多卡和回执恢复代码。模型文字不重复卡片字段，不声称已执行。
+- `businessPolicy.js`分域/动作开关：production默认v2关闭/新动作空，本地开发默认安全清单；false可关闭新入口。未知配置项拒绝。
+
+## 实际测试证据
+
+| 检查 | 结果 | 源码/关联任务 |
+|---|---|---|
+| 最终统一API AI回归，[JSON结果](./ai-business-evidence/api-ai-tests.json)/[运行日志](./ai-business-evidence/api-ai-tests.log) | 25套469项，0失败 | 原全部AI与新HTTP契约8/scope9/policy3，包含只读18/预览17/egress4、动作17/guard13/service13/intent57；子集不再相加；T-001～T-021局部 |
+| API `npm run test:money -- --silent --json --outputFile=logs/ai-business-evidence/api-money-tests.json`，[结果](./ai-business-evidence/api-money-tests.json) | 8套160项，0失败 | CNY39.91、真实四位/外币、信用与原普通入账金额回归；T-005/T-008/T-021 |
+| Web `npm run test:ai`，[日志](./ai-business-evidence/web-ai-tests.log) | 43项，0失败 | `aiBusinessContract.js`/`aiBusinessHistory.js`及聊天组件，新增中文日程/优先级枚举显示验证；T-003/T-010～T-022局部 |
+| Web金额回归，[日志](./ai-business-evidence/web-money-tests.log) | 6项，0失败 | 金额显示/完整还款金额输入的既有前端路径回归，不开放AI还款 |
+| Web `npm run build`，[日志](./ai-business-evidence/web-build.log) | 退出0 | 构建通过；不替代实际浏览器交互 |
+
+隔离单测显式注入内存仓库、供应商和请求基础设施；内存guard执行真实防重逻辑，不用公共数据库回退，也不为模拟模型放松真实refs检查。测试计数不等于原A清单全部通过。早期旧AI15套304、新读29→35→37→39、Web36项等阶段结果保留在PLAN活动日志；本表只报最终统一验收数量。两端`git diff --check`退出0，源报告SHA仍为上述冻结值。
+
+## 真库、权限与真实供应商
+
+1. `tools/ai-business-migrate.js`仅019 AI结构，两次执行幂等；新5个AI基础表与每日会话字段/索引，26非AI正式表数量/摘要不变，未运行旧账务迁移。
+2. 只读account域曾因SELECT权限不足失败。按负责人已授权范围，`tools/ai-business-read-grants.js`仅补17静态业务表SELECT，禁止database.*或写权限；5认证/密钥敏感表真实访问被拒绝。
+3. `tools/ai-business-real-verify.js`最终通过十域22数据集（卡6/资产4）本人/不存在用户隔离查询、真实preview撤销阻止审批/外发/ref反解及消费CAS0、已消费拒绝撤销，以及安全动作/guard真SQL savepoint/外层事务回滚；26非AI及35全库表行数/SHA完全一致，旧验收支出保留。遗留queued/running job转failed且不重跑也通过。该脚本provider=0、backup=0；[实际结果](./ai-business-evidence/real-database.json)明确单真实连接序列savepoint，不用它证明物理并发。
+4. 最终`tools/ai-business-provider-acceptance.js`[实际结果](./ai-business-evidence/provider-acceptance.json)7检查通过，3次真实provider分别是财务查询、待办草稿、39.91普通收支草稿，每轮1次；重复requestId或同preview无额外调用，历史恢复不发provider。AI写入全部外层回滚，正式账本不变。
+5. [双物理pool真实并发结果](./ai-business-evidence/physical-concurrency.json)独立验证2个pool/2个guard连接：运行同id409、不同id跨pool429、完成/失败/超时/过期墓碑不重放、每分钟6次共用预算与窗口恢复，9项检查通过；拒绝后额外work0、externalProviderCalls0。只清理随机不存在owner的exact生成fixture，残留0，26正式表不变。
+6. [真实UI摘要](./ai-business-evidence/ui-acceptance.json)17项交互通过，页面保留`http://127.0.0.1:5174/ai`：待办11-07/改备注/核对/取消、中文枚举；非私密验收支付图12.34/日期/交通/微信，缺账户不能核对，已取消；statement3行10.00/25.00/8.50，仅识别表，排除43.50合计，无批量草稿。DOM image/blob/dataURL均0、回执无图片字节。刷新恢复default/取消态/账单表/输入，[请求计数](./ai-business-evidence/ui-request-counts.json)和[独立复核](./ai-business-evidence/ui-reload-verification.md)证明同三个UI请求各provider_calls1/max1，刷新前后3→3，0新请求/0新provider/0正式流水和todo。计数采集器自身provider0；此UI3次仅统计本轮界面，区别于前述脚本3次和早期失败调用。
+
+早期provider验收在todo读取权限不足时中止，失败前已经调用财务query。此前阶段性“provider=0”描述不准确，不能沿用到这些运行；最终成功运行的3次与早期失败运行分别统计，详细阶段/次数以验收脚本实际输出为准。SQL回滚不能撤销已发生的付费调用或供应商接收数据；脚本没有自动重试。
+
+## 仍未完成与明确排除
+
+真实浏览器已验证上述待办/OCR/刷新范围；正式业务UI执行、全域图表/扩域授权/全部多卡交互、手机/跨天/断线全路径另验收。预算/指定卡消费日期/资产组成已通过最终真SQL；总额币种不明保持差额null，是明确边界。固定资产AI正式新增与精密参数修改由R-024取消，T-017对应部分superseded；安全预填完成，actionUnavailable阻止正式创建，原产品创建/图片缺口另记，不扩大本轮范围。备份权限/固定提案/任务代码和重启遗留job不重跑已测，实际文件与关闭演练未验收。暂无部署commit/PR或released任务；非私密验收图识别通过不保证任意个人截图准确。
+
+实际还款、转账、冲正、退款、外币对账、分期入账、余额重建、正式折旧/精密重算继续排除。基金仅保存用户明确日收益，不推算本金/收益/汇率；不新增认证、私密资料、位置、分享或分类写入。
+
+## 变更文件与溯源
+
+P0：`service/businessService.js`、`businessIntent.js`、`businessPolicy.js`、`requestGuard.js`、`businessRead.js`、`analysisPreviews.js`、`egressPolicy.js`、`businessProposals.js`、`api/index.js`、`service/index.js`、`service/conversations.js`、`service/deepseek.js`、`service/ocr.js`，路径前缀`src/modules/ai/`。固定执行器：`src/common/services/aiBusinessActions.js`。结构：`mysql/migrations/019_ai_business_workspace.sql`、`mysql/live.sql`。Web：`src/views/AI/Assistant.vue`、`src/components/ai/AiPreviewCard.vue`、`AiDatasetCard.vue`、`AiProposalCard.vue`、`src/utils/aiBusinessContract.js`、`aiBusinessHistory.js`及对应测试。
+
+原E-001～E-014保留为版本1.0基线；本轮实现/验证另列E-015～E-029，E-025为物理双pool、E-028为真实UI/刷新、E-029为独立实施SHA清单；R-025横切T-001/T-003/T-006/T-012/T-021/T-022，验收A-023。PLAN台账/实施计划/决策/溯源/活动日志已更新1.1，当前25R/22T/23A，源报告和旧规划日志保持历史含义。当前未提交源码/文档/实际证据哈希见[实施清单](../../Docs/docs/ai/PLAN/sources/implementation-manifest-2026-11-06.json)，不回写旧source-manifest。
+
+---
+
+## 来源：CHANGELOG_2026-11-06_AI_FINANCIAL_PREPROCESSING.md
+
+# AI 财务预处理与风险防护执行记录
+
+日期：2026-11-06；来源：S-008“执行，一定要规划全场景预处理和风险防范”。API/Web均在feat/ai-assistant，工作区未提交、未部署。完整规划和逐层证据见[PLAN执行状态](../../Docs/docs/ai/PLAN/next-stage/execution-status.md)与[66场景台账](../../Docs/docs/ai/PLAN/next-stage/scenario-evidence.json)。
+
+## 实际行为
+
+- 普通人民币流水先解析账户实体，再识别金额；借记卡000不成为第二个金额。千/万单位由服务器确定性计算；含糊、负数、复合单位、指数形式、非法日历、未来日期、混币和禁止特殊账务不能默默转为普通流水。
+- 39.91与尾零39.9100保持39.91；39.9099、0.001拒绝并要求手工明确，不能自动舍入或修复历史库。合法0.01保留。基金明确日收益的四位/正负规则独立保留。
+- 本人真实账户、同币种应用账本纯读预检；借记使用正式账本源，信用使用实际CreditCore与共享额度池。缺失/脏源/容量超限/超时保持不可核验，禁止余额0或汇率1回退。没有银行实时可用余额证明。
+- 不足、含糊、缺账户只生成非执行核查候选。补字段、重新核验、创建草稿、编辑、核对、取消和恢复均0次模型调用。余额不足不能生成可执行草稿；修正金额或账户后本地重检。
+- 默认小于1元仅提示；1000元起提醒；10000元起需手工确认完整金额；使用至少50%可用资金提醒。阈值不是错误判定。近90天同币种/方向/类别至少30笔才可用中位数+6MAD提醒；样本不足、截断、坏数据或零MAD不作强统计结论，不更改历史样本。
+- 编辑撤销核对。资金、字段、来源、政策和风险digest绑定当前版本；核对后变化需重核对。提交只收id/version，同事务锁本人分类、账户及共享池，复验最新资金、写正式流水与回执；失败整组回滚。手工普通收支入口也使用资金防线，实际旧转账业务保留专门分类/支付语义，不开放给AI。
+- OCR只对合格单笔已完成CNY支付给候选；缺账户需手工选择。图文金额/方向/日期冲突必须手工填相应字段并留修正证据；未支付、特殊、多笔/汇总、外币或不可靠源不能靠覆盖字段洗白。原图只在本次内存，持久化加密候选和短结构化证据。
+- 请求号和图片来源指纹保留墓碑；候选消费CAS最多一份草稿。本地候选、草稿和恢复回执同事务，事务后历史失败恢复原草稿。GET及重复POST取当前版本，取消/过期/入账不回放旧pending卡。v2和OCR最多1次模型，旧v1明确最多4次，无自动重试/修JSON/模型回退/循环。
+- 同进程源读取、锁等待、模型回复后及提交前重验当前开关；关闭后不新增可执行草稿/正式流水，已提交回执和取消仍可用。跨进程配置一致发布另需演练。
+
+## 最终证据
+
+| 验证 | 结果 | 范围 |
+|---|---|---|
+| [API AI](ai-business-evidence/s2-api-tests.json) | 33套732/732 | 规则、契约、请求预算、归属、来源、关闭竞态、回执与事务adapter |
+| [资金源](ai-business-evidence/s2-funds-final-tests.json) | 3套34/34 | test:ai文件名范围外的正式资金预检/读池/CreditCore |
+| [金额回归](ai-business-evidence/s2-money-tests.json) | 8套176/176 | 包含与AI重复套件，不能与AI相加当总数 |
+| [Web AI](ai-business-evidence/s2-web-final-ai.log) / [金额](ai-business-evidence/s2-web-final-money.log) / [构建](ai-business-evidence/s2-web-final-build.log) | 64/64、6/6、退出0 | 组件、调用契约与生产构建 |
+| [隔离真MySQL](AI_FINANCIAL_ISOLATED_VERIFY_2026-11-06.json) | 56/56 | 合成39.91/0.01正式写、资金边界、双物理writer、人工与AI竞争、共享信用池、SQL故障回滚；正式库26表摘要不变，provider0/defaultPool0 |
+| [本地恢复补充真MySQL](s2-local-recovery-isolated.json) | 6/6 | 同事务恢复payload故障、提交后历史失败、取消/过期/已入账GET/POST；未新增正式记录，两个库财务摘要不变 |
+| [真实桌面UI](ai-business-evidence/s2-ui-acceptance.json) | 10/10 | 缺账户、1000提醒、16000不足、39.9099拒绝、39.91候选转草稿、30秒过期、本地重检核对、取消、重启/刷新恢复 |
+| [020迁移](ai-business-evidence/s2-live-schema-migration.json) / [静态权限](ai-business-evidence/s2-live-read-grants.json) | 通过 | 仅新增AI候选表，幂等；18业务表SELECT/5敏感表拒绝，正式26表摘要不变 |
+
+本轮页面请求计数增量1、candidate增量1、draft增量1，provider增量0；正式26表摘要不变。没有在正式库执行commit，旧验收0.01记录按用户要求保留。截图[非法分位](ai-business-evidence/s2-ui-invalid-precision.png)、[取消后恢复](ai-business-evidence/s2-ui-cancelled-restored.png)未展示真实余额。早期11个失败是测试设施缺少恢复SQL事务支持，保留[失败证据](ai-business-evidence/s2-api-tests.failure-before-fixture-recovery.json)，不列为当前通过证据。
+
+## 明确保留的验收范围
+
+66个主场景和11个时序变体已规划并逐层溯源；局部通过不等于全部场景verified。真实手机、上海午夜跨天、浏览器三阶段断网、真实COMMIT回应丢失/死锁、所有生活业务完整UI、备份实际文件与隐私全生命周期、生产灰度及跨实例关闭演练仍待专项验收。任意个人支付截图的现实准确性尚未证明，模型自报证据不能替代人工核对。
+
+仅保留独立本机联调服务：127.0.0.1:5174/ai指向7789，加载最终源码；没有停止用户既有7788服务。当前开发服务的密钥强度检查有配置告警，生产启动守卫会拒绝不合格配置；没有修改或输出密钥。此次结果不能当生产发布验收。
+
+原意见报告及上一阶段冻结manifest不覆盖。最终源代码、文档、证据SHA记录在[S2实施清单](../../Docs/docs/ai/PLAN/sources/s2-implementation-manifest-2026-11-06.json)，不冒充Git提交或上线记录。
+
+---
+
+## 来源：CHANGELOG_2026-11-06_AI_OPENING_PLAN.md
+
+# 2026-11-06 AI 业务开放规划与溯源
+
+依据负责人更新的`AI_BUSINESS_OPENING_ASSESSMENT_2026-11-06.md`，派出业务、安全、交付三个子代理独立只读分析，主代理汇总[最终PLAN](../../Docs/docs/ai/PLAN/README.md)。本次仅文档，不实现新增业务、改变真实数据或运行服务/模型/备份/迁移。
+
+## 来源与最新决定
+
+- API/Web当前基线为`feat/ai-assistant`，分别`35fae48a9d6c061e12475c2a75345ffcd22c312d`与`a842dd179e9251620e469abd1890af1144db4205`。
+- 原报告79,317字节，SHA-256为`f727a43627a07528fb8c02563e485ddea3d74d436b06464e88ee9f7a6a5f640d`。按原始字节冻结副本，保留负责人原文件改动；不把旧报告首行分支名当成现状。
+- 负责人本轮明确：实际还款不开放，涉及精密数据处理不包含AI接入；OCR仅本次处理、不落盘。这两条答复独立存档并映射到D/R/T/A编号。
+- 固定资产原“全套”范围按最新决定收窄，正式折旧/精密重算回原入口；基金仅登记用户明确收益，不由模型推算收益或本金。
+
+## 交付文件与跟踪
+
+`Docs/docs/ai/PLAN/`包含最终实施计划、22任务台账、24需求与22验收溯源、决策表、活动日志、三份子代理分析及源报告/答复/源码hash清单。实施任务初始全部planned，不能把规划完成当成新增功能完成；后续任务变更须填入commit/PR、测试、独立复核与真实验收范围。
+
+同步AI文档首页与VuePress导航，主API README引用本日志和计划。Docs当前不是Git仓库，以版本/快照/hash/日志提供文件级溯源，不编造提交记录，也未建立定时自动任务。
+
+## 关键前置缺口
+
+- 现有真实候选ID、近期草稿、历史和工具结果尚无统一外发map；布尔consent尚未绑定具体数据范围。
+- v1前端契约仅单笔普通收支；新增业务需v2及独立类型卡片、固定executor和核对回执。
+- 单日会话需数据库唯一default锚点，同时解决latest_draft_id单目标覆盖问题。
+- 固定资产表单占位、图片必填与0残值校验问题；状态/年限/残值改动含精密副作用，不能直接复用。
+- 基金现单笔历史接口缺外部事务，批量需归属、父基金锁、现有日期唯一键及整批写入/汇总/回执一致。
+- 系统备份只能管理员固定后台任务，回执不含SQL/内部路径/凭据；文件副作用另测，不能宣称数据库事务可整体回滚。
+
+## 验证
+
+本轮执行文档结构、来源hash、编号/覆盖、源码行号与链接检查，以及Docs构建检查；具体结果在PLAN活动日志中追加。未进行新增AI能力的自动测试或真实数据库/供应商验收。
+
+最终检查通过：原报告快照与工作区SHA一致；37个源码证据文件hash、83处直接源码行号、19个内部链接有效；24R/22T/22A双向映射一致，显式编号依赖无环，22实施任务全部planned。`npm run docs:build`成功渲染58页，包含9个PLAN页面；API `git diff --check`通过。Web仅保留原有Login.vue用户改动，API业务源码/SQL/配置无本轮差异。

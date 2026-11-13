@@ -9,6 +9,13 @@ class MomentController {
    */
   _parseFields = (item) => {
     if (!item) return null;
+    const safeJsonParse = (val, fallback) => {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return fallback;
+      }
+    };
     let childIds = [];
     if (item.children) {
       childIds =
@@ -20,9 +27,9 @@ class MomentController {
     }
     return {
       ...item,
-      img_url: item.img_url ? JSON.parse(item.img_url) : [],
-      mood: item.mood ? JSON.parse(item.mood) : null,
-      location: item.location ? JSON.parse(item.location) : null,
+      img_url: item.img_url ? safeJsonParse(item.img_url, [item.img_url]) : [],
+      mood: item.mood ? safeJsonParse(item.mood, item.mood) : null,
+      location: item.location ? safeJsonParse(item.location, item.location) : null,
       visible_type: (() => {
         if (!item.visible_type) return { vt: 0, vs: 0, pw: 0 };
         try {
@@ -79,6 +86,7 @@ class MomentController {
       });
       res.status(200).json({ status: 200, data: result });
     } catch (error) {
+      console.error("[moment/list] 查询失败:", error);
       res.status(500).json({ status: 500, message: "查询失败" });
     }
   };

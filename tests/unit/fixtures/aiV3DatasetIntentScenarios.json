@@ -1,0 +1,1172 @@
+{
+  "N01": {
+    "datasetId": "finance-monthly",
+    "chain": "dataset-01",
+    "isolated": false,
+    "message": "查看6月份的收入和支出月度汇总。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ],
+    "sort": "monthAsc",
+    "expectDirection": "both",
+    "summary": {
+      "income": "3911.24",
+      "expense": "5784.61",
+      "count": 268,
+      "expenseCount": 153,
+      "incomeCount": 115,
+      "unpricedCount": 0
+    },
+    "expect": {
+      "sourceRecordCount": 268,
+      "matchedRowCount": 1
+    }
+  },
+  "F01": {
+    "datasetId": "finance-monthly",
+    "chain": "dataset-01",
+    "isolated": false,
+    "prerequisites": [
+      "N01"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ],
+    "sort": "monthAsc",
+    "expectDirection": "both"
+  },
+  "N02": {
+    "datasetId": "finance-categories",
+    "chain": "dataset-02",
+    "isolated": false,
+    "message": "查看6月份按分类统计的收入和支出金额。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ],
+    "sort": "categoryAmountDesc",
+    "expectDirection": "both",
+    "summary": {
+      "income": "3911.24",
+      "expense": "5784.61",
+      "count": 268
+    }
+  },
+  "F02": {
+    "datasetId": "finance-categories",
+    "chain": "dataset-02",
+    "isolated": false,
+    "prerequisites": [
+      "N02"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ],
+    "sort": "categoryAmountDesc",
+    "expectDirection": "both"
+  },
+  "N03": {
+    "datasetId": "finance-transactions",
+    "chain": "dataset-03",
+    "isolated": false,
+    "message": "查看6月份收支流水明细。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ],
+    "sort": "dateDesc",
+    "expectDirection": "both",
+    "expect": {
+      "sourceRecordCount": 268
+    }
+  },
+  "F03": {
+    "datasetId": "finance-transactions",
+    "chain": "dataset-03",
+    "isolated": false,
+    "prerequisites": [
+      "N03"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ],
+    "sort": "dateDesc",
+    "expectDirection": "both"
+  },
+  "N04": {
+    "datasetId": "finance-daily",
+    "chain": "dataset-04",
+    "isolated": false,
+    "message": "查看6月份逐日收入与支出的每日汇总。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ],
+    "sort": "dateDesc",
+    "expectDirection": "both",
+    "expect": {
+      "sourceRecordCount": 268
+    }
+  },
+  "F04": {
+    "datasetId": "finance-daily",
+    "chain": "dataset-04",
+    "isolated": false,
+    "prerequisites": [
+      "N04"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ],
+    "sort": "dateDesc",
+    "expectDirection": "both"
+  },
+  "N05": {
+    "datasetId": "account-balances",
+    "chain": "dataset-05",
+    "isolated": false,
+    "message": "查看当前已保存的各账户余额和币种。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F05": {
+    "datasetId": "account-balances",
+    "chain": "dataset-05",
+    "isolated": false,
+    "prerequisites": [
+      "N05"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N06": {
+    "datasetId": "card-cards",
+    "chain": "dataset-06",
+    "isolated": false,
+    "message": "查看当前我的卡片清单和账单日、还款日、登记到期月份。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F06": {
+    "datasetId": "card-cards",
+    "chain": "dataset-06",
+    "isolated": false,
+    "prerequisites": [
+      "N06"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N07": {
+    "datasetId": "card-counts",
+    "chain": "dataset-07",
+    "isolated": false,
+    "message": "查看当前我的全部卡片按类型分别有多少张。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F07": {
+    "datasetId": "card-counts",
+    "chain": "dataset-07",
+    "isolated": false,
+    "prerequisites": [
+      "N07"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N08": {
+    "datasetId": "card-monthlyConsumption",
+    "chain": "dataset-08",
+    "isolated": false,
+    "message": "查看最近三个月所有卡片逐卡逐月的消费流水金额。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ],
+    "groupBy": "cardMonth",
+    "expectDirection": "expense"
+  },
+  "F08": {
+    "datasetId": "card-monthlyConsumption",
+    "chain": "dataset-08",
+    "isolated": false,
+    "prerequisites": [
+      "N08"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ],
+    "groupBy": "cardMonth",
+    "expectDirection": "expense"
+  },
+  "N09": {
+    "datasetId": "card-bills",
+    "chain": "dataset-09",
+    "isolated": false,
+    "message": "查看2026年9月至11月已保存的信用卡账单快照、本期账单和待还金额。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-11-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F09": {
+    "datasetId": "card-bills",
+    "chain": "dataset-09",
+    "isolated": false,
+    "prerequisites": [
+      "N09"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-11-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N10": {
+    "datasetId": "card-repayments",
+    "chain": "dataset-10",
+    "isolated": false,
+    "message": "查看2026年5月1日至8月31日已保存的信用卡还款历史。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-05-01",
+      "endDate": "2026-08-31"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F10": {
+    "datasetId": "card-repayments",
+    "chain": "dataset-10",
+    "isolated": false,
+    "prerequisites": [
+      "N10"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-05-01",
+      "endDate": "2026-08-31"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N11": {
+    "datasetId": "card-pools",
+    "chain": "dataset-11",
+    "isolated": false,
+    "message": "查看当前已保存的共享额度池配置。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F11": {
+    "datasetId": "card-pools",
+    "chain": "dataset-11",
+    "isolated": false,
+    "prerequisites": [
+      "N11"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N12": {
+    "datasetId": "budget-plans",
+    "chain": "dataset-12",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日已保存的预算计划和登记使用额。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F12": {
+    "datasetId": "budget-plans",
+    "chain": "dataset-12",
+    "isolated": false,
+    "prerequisites": [
+      "N12"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N13": {
+    "datasetId": "todo-events",
+    "chain": "dataset-13",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日保存的待办日程。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F13": {
+    "datasetId": "todo-events",
+    "chain": "dataset-13",
+    "isolated": false,
+    "prerequisites": [
+      "N13"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N14": {
+    "datasetId": "work-salary",
+    "chain": "dataset-14",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日已登记的每日工资流水。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F14": {
+    "datasetId": "work-salary",
+    "chain": "dataset-14",
+    "isolated": false,
+    "prerequisites": [
+      "N14"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N15": {
+    "datasetId": "work-rules",
+    "chain": "dataset-15",
+    "isolated": false,
+    "message": "查看当前保存的工资规则、基本工资和时薪参考。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F15": {
+    "datasetId": "work-rules",
+    "chain": "dataset-15",
+    "isolated": false,
+    "prerequisites": [
+      "N15"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N16": {
+    "datasetId": "asset-snapshots",
+    "chain": "dataset-16",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日的流动资产系统快照。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F16": {
+    "datasetId": "asset-snapshots",
+    "chain": "dataset-16",
+    "isolated": false,
+    "prerequisites": [
+      "N16"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N17": {
+    "datasetId": "asset-registers",
+    "chain": "dataset-17",
+    "isolated": false,
+    "message": "查看2026年9月1日至30日的手工资产登记。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-09-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F17": {
+    "datasetId": "asset-registers",
+    "chain": "dataset-17",
+    "isolated": false,
+    "prerequisites": [
+      "N17"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-09-30"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N18": {
+    "datasetId": "asset-composition",
+    "chain": "dataset-18",
+    "isolated": false,
+    "message": "查看当前已保存账户余额按账户类型及币种的资产组成。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F18": {
+    "datasetId": "asset-composition",
+    "chain": "dataset-18",
+    "isolated": false,
+    "prerequisites": [
+      "N18"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N19": {
+    "datasetId": "asset-comparison",
+    "chain": "dataset-19",
+    "isolated": false,
+    "message": "查看2026年8月1日至31日同日手工资产登记与系统保存值对照。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-31"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F19": {
+    "datasetId": "asset-comparison",
+    "chain": "dataset-19",
+    "isolated": false,
+    "prerequisites": [
+      "N19"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-31"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N20": {
+    "datasetId": "fixedAsset-saved",
+    "chain": "dataset-20",
+    "isolated": false,
+    "message": "查看当前已保存的固定资产账面价值、二手价和折旧状态。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F20": {
+    "datasetId": "fixedAsset-saved",
+    "chain": "dataset-20",
+    "isolated": false,
+    "prerequisites": [
+      "N20"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N21": {
+    "datasetId": "fund-holdings",
+    "chain": "dataset-21",
+    "isolated": false,
+    "message": "查看当前基金登记的本金、已登记收益合计和登记市值。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F21": {
+    "datasetId": "fund-holdings",
+    "chain": "dataset-21",
+    "isolated": false,
+    "prerequisites": [
+      "N21"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N22": {
+    "datasetId": "fund-history",
+    "chain": "dataset-22",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日基金的每日收益与本金增量登记历史。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F22": {
+    "datasetId": "fund-history",
+    "chain": "dataset-22",
+    "isolated": false,
+    "prerequisites": [
+      "N22"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "N23": {
+    "datasetId": "installment-plans",
+    "chain": "dataset-23",
+    "isolated": false,
+    "message": "查看2026年11月1日至9日分期计划与范围内已保存期次状态。最多展示10条，并说明实际读取的数据范围、匹配数量和本次展示数量。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "normal",
+      "dataset-routing",
+      "metadata",
+      "read-only"
+    ]
+  },
+  "F23": {
+    "datasetId": "installment-plans",
+    "chain": "dataset-23",
+    "isolated": false,
+    "prerequisites": [
+      "N23"
+    ],
+    "message": "延续刚才这个查询，日期范围不变，清空文字筛选，改为只展示1条。告诉我范围里共有多少条、这次展示几条；已有保存值和历史发生值请按刚才的数据口径回答。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "expectFilter": "",
+    "maxRows": 1,
+    "dimensions": [
+      "followup",
+      "context",
+      "limit",
+      "scope",
+      "counts"
+    ]
+  },
+  "R03": {
+    "datasetId": "card-monthlyConsumption",
+    "isolated": true,
+    "message": "最近三个月哪张借记卡的累计支出最高？只给第一名。",
+    "scope": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-11-09"
+    },
+    "sort": "amountDesc",
+    "groupBy": "card",
+    "cardTypes": [
+      "debit"
+    ],
+    "expectDirection": "expense",
+    "answerIncludes": [
+      "183.32"
+    ],
+    "rows": [
+      {
+        "amountCNY": "183.32"
+      }
+    ],
+    "maxRows": 1,
+    "dimensions": [
+      "regression",
+      "ranking",
+      "type",
+      "source-correctness"
+    ]
+  },
+  "H05": {
+    "datasetId": "account-balances",
+    "chain": "dataset-05",
+    "isolated": false,
+    "prerequisites": [
+      "N05"
+    ],
+    "message": "查询2025年6月1日至30日当时的各账户保存余额和币种，最多展示10条。重新核对本数据集：如果只能读取目前保存状态，请明确说明无法凭它证明历史时点；别把当前保存值冒充2025年6月当时值。",
+    "scope": {
+      "startDate": "2025-06-01",
+      "endDate": "2025-06-30"
+    },
+    "maxRows": 10,
+    "dimensions": [
+      "historical-saved-state",
+      "context",
+      "range",
+      "honest-coverage"
+    ],
+    "historicalState": true,
+    "answerPatterns": [
+      "目前|当前|现在",
+      "不能|无法|不代表|不等于"
+    ]
+  },
+  "X03": {
+    "datasetId": "finance-categories",
+    "isolated": true,
+    "message": "2026年5月只查询购汇支出的分类汇总，共几笔、合计多少、首笔末笔日期各是哪天？这些首末日期能说明每笔金额与发生日期的对应关系吗？",
+    "scope": {
+      "startDate": "2026-05-01",
+      "endDate": "2026-05-31"
+    },
+    "sort": "categoryAmountDesc",
+    "expectDirection": "expense",
+    "expectFilter": "购汇",
+    "maxRows": 10,
+    "expect": {
+      "matchedRowCount": 1,
+      "sourceRecordCount": 2,
+      "rowsComplete": true
+    },
+    "summary": {
+      "income": "0.00",
+      "expense": "2973.14",
+      "count": 2,
+      "incomeCount": 0,
+      "expenseCount": 2,
+      "unpricedCount": 0
+    },
+    "rows": [
+      {
+        "category": "购汇",
+        "count": 2,
+        "amountCNY": "2973.14"
+      }
+    ],
+    "dimensions": [
+      "original-user-regression",
+      "category-dates",
+      "schema-allowlist",
+      "grain"
+    ]
+  },
+  "X06": {
+    "datasetId": "finance-monthly",
+    "isolated": true,
+    "message": "查询2026年11月1日至30日收入和支出，给柱状图。若只能查到今天，说明本次实际截至日期，别说整月完整。",
+    "scope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-09"
+    },
+    "requestedScope": {
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-30"
+    },
+    "sort": "monthAsc",
+    "expectDirection": "both",
+    "chart": true,
+    "chartExpected": {
+      "type": "bar",
+      "xKey": "month",
+      "yKeys": [
+        "income",
+        "expense"
+      ]
+    },
+    "summary": {
+      "income": "0.00",
+      "expense": "309.06",
+      "count": 12
+    },
+    "answerPatterns": [
+      "2026-11-09|11月9日|11 月 9 日",
+      "截至|截止|只.*到|不.*完整|部分"
+    ],
+    "dimensions": [
+      "future-end-clamp",
+      "requested-v-effective",
+      "partial-month",
+      "chart"
+    ]
+  },
+  "X07": {
+    "datasetId": "finance-monthly",
+    "isolated": true,
+    "message": "查询2025年11月8日至2026年11月9日收入与支出的逐月汇总，最多展示50个月。如范围被限制，请保留原请求与实际范围的说明。",
+    "scope": {
+      "startDate": "2025-11-10",
+      "endDate": "2026-11-09"
+    },
+    "requestedScope": {
+      "startDate": "2025-11-08",
+      "endDate": "2026-11-09"
+    },
+    "sort": "monthAsc",
+    "expectDirection": "both",
+    "maxRows": 50,
+    "answerPatterns": [
+      "缩短|收窄|缩小|限制|12.*月|十二.*月"
+    ],
+    "dimensions": [
+      "366-day-boundary",
+      "bounded-range",
+      "requested-v-effective"
+    ]
+  },
+  "X13": {
+    "datasetId": "finance-monthly",
+    "chain": "four-domains",
+    "isolated": false,
+    "message": "分别查询：6月份收入和支出月度汇总；最近三个月所有卡片逐卡逐月消费；11月1日至9日流动资产系统保存快照；11月1日至9日已登记工资流水。每部分保留各自日期范围与数量，不要混币，也别把工资记录当银行到账。给6月收入支出柱状图。",
+    "scope": {
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30"
+    },
+    "expectDirection": "both",
+    "chart": true,
+    "chartExpected": {
+      "type": "bar",
+      "xKey": "month",
+      "yKeys": [
+        "income",
+        "expense"
+      ]
+    },
+    "multiDatasetExpectations": [
+      {
+        "datasetId": "finance-monthly",
+        "scope": {
+          "startDate": "2026-06-01",
+          "endDate": "2026-06-30"
+        },
+        "expectDirection": "both",
+        "summary": {
+          "expense": "5784.61",
+          "income": "3911.24",
+          "count": 268
+        }
+      },
+      {
+        "datasetId": "card-monthlyConsumption",
+        "scope": {
+          "startDate": "2026-09-01",
+          "endDate": "2026-11-09"
+        },
+        "groupBy": "cardMonth",
+        "expectDirection": "expense"
+      },
+      {
+        "datasetId": "asset-snapshots",
+        "scope": {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-09"
+        },
+        "rows": [
+          {
+            "date": "2026-11-06",
+            "netAsset": "8919.14"
+          }
+        ]
+      },
+      {
+        "datasetId": "work-salary",
+        "scope": {
+          "startDate": "2026-11-01",
+          "endDate": "2026-11-09"
+        },
+        "empty": true,
+        "requireFinal": false
+      }
+    ],
+    "dimensions": [
+      "finance-card-asset-work",
+      "multi-task-scope",
+      "chart-ownership",
+      "empty-subtask",
+      "context"
+    ]
+  }
+}

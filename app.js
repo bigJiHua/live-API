@@ -118,6 +118,7 @@ app.use(
   cors({
     origin: allowedOrigin,
     credentials: true, // 允许携带 cookie
+    exposedHeaders: ["X-AI-Trace-Id"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -302,5 +303,27 @@ if (require.main === module) {
     console.log(`📡 API 地址: http://localhost:${PORT}/api`);
   });
 }
+
+// --- 2026-11-10 AI 轮次停机标记：进程退出前把在跑轮次落 AI_TURN_INTERRUPTED 终态 ---
+// 否则僵尸 running 行要等死线（最长 300s）才被 reap，前端表现为"还在回复却报总时限超时"。
+// Windows 上 nodemon 强杀不走任何信号处理器（child.kill 实证 TerminateProcess），那种场景
+// 由 requestGuard 的心跳租约兜底（≤45s reap）；这里的信号路径覆盖 Ctrl+C 与 Unix 重启。
+let aiShuttingDown = false;
+async function gracefulAiShutdown(signalName, reraise) {
+  if (aiShuttingDown) { process.exit(0); return; }
+  aiShuttingDown = true;
+  try {
+    const marked = await Promise.race([
+      Promise.resolve(require("./src/modules/ai/api").shutdownAI?.()).catch(() => null),
+      new Promise(resolve => setTimeout(resolve, 2000)),
+    ]);
+    if (marked) console.log(`[shutdown] ${signalName}: 已标记 ${marked} 个进行中的 AI 轮次为已中断`);
+  } catch (_) { /* 数据库不可达时由租约到期 reap 兜底。 */ }
+  if (reraise) reraise();
+  else process.exit(0);
+}
+process.on("SIGINT", () => gracefulAiShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulAiShutdown("SIGTERM"));
+process.once("SIGUSR2", () => gracefulAiShutdown("SIGUSR2", () => process.kill(process.pid, "SIGUSR2")));
 
 module.exports = app;

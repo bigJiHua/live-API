@@ -37,11 +37,11 @@ function createDraftStore({ now = Date.now, ttl = 15 * 60 * 1000, executor = db 
 
   return {
     prune,
-    async save(userId, input) {
+    async save(userId, input, queryExecutor = executor) {
       const id = crypto.randomUUID();
       const expiresAt = now() + ttl;
       const { originalText, source, conversationId, trace, ...core } = input;
-      await executor.execute(
+      await queryExecutor.execute(
         `INSERT INTO bus_ai_draft
          (id, user_id, direction, amount, currency, trans_date, category_id, account_id, pay_method, remark,
           status, version, missing_fields, trace_snapshot, source, original_text, conversation_id, expires_at)
@@ -68,12 +68,13 @@ function createDraftStore({ now = Date.now, ttl = 15 * 60 * 1000, executor = db 
       if (current.status === 'committed') throw new AiError('这份草稿已入账', 409, 'AI_DRAFT_COMMITTED');
       const [result] = await executor.execute(
         `UPDATE bus_ai_draft SET direction=?, amount=?, currency=?, trans_date=?, category_id=?, account_id=?,
-         pay_method=?, remark=?, missing_fields=?, status='pending', version=version+1
+         pay_method=?, remark=?, missing_fields=?, trace_snapshot=?, status='pending', version=version+1
          WHERE id=? AND user_id=? AND version=? AND status IN ('pending','reviewed')
            AND expires_at > ? AND expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000`,
         [fields.direction, String(fields.amount), fields.currency, fields.transDate, fields.categoryId,
          fields.accountId, fields.payMethod, fields.remark || '',
          JSON.stringify(fields.missingFields || current.missingFields),
+         JSON.stringify(fields.trace || current.trace || []),
          id, userId, version, now()]);
       if (result.affectedRows === 0) throw new AiError('草稿版本已变化，请重新核对', 409, 'AI_DRAFT_CONFLICT');
       const draft = await find(userId, id);
@@ -82,17 +83,18 @@ function createDraftStore({ now = Date.now, ttl = 15 * 60 * 1000, executor = db 
         accountName: fields.accountName ?? current.accountName ?? null,
         choices: fields.choices || [], needsReview: true, formalWriteEnabled: false };
     },
-    async act(userId, id, version, action) {
+    async act(userId, id, version, action, financialReview = null) {
       const current = await find(userId, id);
       if (action === 'review' && current.missingFields.length) {
         throw new AiError('请先补齐草稿中的分类、账户和支付方式');
       }
       const target = action === 'review' ? 'reviewed' : 'discarded';
       const [result] = await executor.execute(
-        `UPDATE bus_ai_draft SET status=?, version=version+1
+        `UPDATE bus_ai_draft SET status=?, trace_snapshot=?, version=version+1
          WHERE id=? AND user_id=? AND version=? AND status IN ('pending','reviewed')
            AND expires_at > ? AND expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000`,
-        [target, id, userId, version, now()]);
+        [target, JSON.stringify([...(current.trace || []).filter(item=>item.tool!=='financial_review'),
+          ...(action==='review'&&financialReview?[{tool:'financial_review',result:financialReview}]:[])]), id, userId, version, now()]);
       if (result.affectedRows === 0) throw new AiError('草稿版本已变化，请重新核对', 409, 'AI_DRAFT_CONFLICT');
       const draft = await find(userId, id);
       return draft;
@@ -105,7 +107,16 @@ function createDraftStore({ now = Date.now, ttl = 15 * 60 * 1000, executor = db 
          WHERE id=? AND user_id=? AND version=? AND status='reviewed' AND source IN ('user-readonly','image-ocr')
            AND expires_at > ? AND expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000`,
         [id, userId, version, now()]);
-      if (result.affectedRows === 0) throw new AiError('草稿版本已变化或状态不允许入账', 409, 'AI_DRAFT_CONFLICT');
+      if (result.affectedRows === 0) {
+        // UPDATE 等待另一事务提交后，用当前锁定读恢复其唯一回执。
+        // 未完成/取消/版本变化仍是冲突，不能把它们当作一次成功提交。
+        const [rows] = await conn.execute(
+          `SELECT ${CORE_FIELDS} FROM bus_ai_draft WHERE id=? AND user_id=? LIMIT 1 FOR UPDATE`, [id, userId]);
+        const committed = rows[0];
+        if (committed?.status === 'committed' && committed.committed_record_id) return rowToDraft(committed);
+        throw new AiError('草稿版本已变化或状态不允许入账', 409, 'AI_DRAFT_CONFLICT');
+      }
+      return null;
     },
     async setRecordId(userId, id, recordId, queryExecutor = executor) {
       const [result] = await queryExecutor.execute(

@@ -1,6 +1,39 @@
 # 日志文件
 logs/*.log
-
+logs/about-ai
+# 联调证据/诊断产物（含真实数据，禁止提交）
+logs/*.md
+!logs/CHANGELOG_*.md
+logs/ai-business-evidence/
+logs/ai-fullscene-2026-11-07/
+logs/ai-v3-2026-11-07/
+logs/ai-evidence-*/
+# 本地真实环境测试产物
+tests/real/
+# 测试生成的 OCR 验收图片
+tests/fixtures/ocr-*.png
+# 真实验收捕获的 fixture（含本人卡清单/额度/收支/还款/资产/偏好记忆，禁止提交；本地测试仍引用）
+tests/fixtures/aiCardBillChartPaidRegression.json
+tests/fixtures/aiCardCountRankCaptured.json
+tests/fixtures/aiCardLimitBasisPaidRegression.json
+tests/fixtures/aiDailyConditionFixture.json
+tests/fixtures/aiFinanceSavedStateFixture.json
+tests/fixtures/aiFinancialRankFixture.json
+tests/fixtures/aiFourQueryMonthlyChartPaidRegression.json
+tests/fixtures/aiFundAmountConnectorCaptured.json
+tests/fixtures/aiMemoryPossessiveReadStateCaptured.json
+tests/fixtures/aiMemoryReadStateCaptured.json
+tests/fixtures/aiMemoryRegexReadStateCaptured.json
+tests/fixtures/aiOmittedDateWindowCaptured.json
+tests/fixtures/aiQueryWindowN06Recorded.json
+tests/fixtures/aiV3AssetCompositionPieCaptured.json
+tests/fixtures/aiV3ChartToolRoleReplay.json
+tests/fixtures/aiX10FutureFinanceProviderCapture.json
+tests/fixtures/aiV3MemoryFixture.js
+tests/unit/fixtures/aiSourceCurrencyCapturedCase.json
+tests/unit/fixtures/aiV3DatasetIntentFixture.cjs
+tests/unit/fixtures/aiV3SourceCurrencyFixture.cjs
+tests/helpers/aiAmountFailureRecorded.json
 # 依赖
 node_modules/
 
@@ -15,6 +48,11 @@ node_modules/
 # 上传文件
 public/uploads/*
 data
+!/data/
+/data/*
+!/data/memory/
+/data/memory/*
+!/data/memory/README.md
 
 # 编辑器
 .vscode/

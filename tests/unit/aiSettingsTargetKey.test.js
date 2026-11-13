@@ -17,7 +17,7 @@ test.each([
 ])('omitting a Key only reuses it for the same normalized target %s', apiUrl => {
   const store = createSettingsStore();
   expect(store.validate(update(apiUrl), original)).toEqual({
-    apiUrl: original.apiUrl, apiKey: original.apiKey, model: 'model-two',
+    name: 'provider-one.test', apiUrl: original.apiUrl, apiKey: original.apiKey, model: 'model-two',
   });
 });
 

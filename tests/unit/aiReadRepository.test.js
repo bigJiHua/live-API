@@ -32,10 +32,13 @@ describe('AI repository: SQL is fixed, scoped and read-only', () => {
     connection.execute.mockResolvedValue([[]]);
     await createReadRepository({}).choices('user_a');
     for (const [statement, params] of connection.execute.mock.calls) {
-      expect(statement.sql).not.toMatch(/SELECT\s+\*|last4_no|card_bin|password|aes_key|token/i);
+      expect(statement.sql).not.toMatch(/SELECT\s+\*|card_bin|password|aes_key|token/i);
       expect(statement.sql).toContain('user_id = ?');
       expect(params).toEqual(['user_a']);
     }
+    const [statement] = connection.execute.mock.calls.find(([value]) => value.sql.includes('FROM card_base'));
+    expect(statement.sql).toContain("last4_no REGEXP '^[0-9]{1,4}$'");
+    expect(statement.sql).toContain('AS tail');
   });
   test('choices exclude special categories and select only normal owned accounts', async () => {
     const ordinary = [{ id: 'food', name: '餐饮', type: 'expense' }, { id: 'profit', name: '投资收益', type: 'income' }];
@@ -68,5 +71,31 @@ describe('AI repository: SQL is fixed, scoped and read-only', () => {
     connection.query.mockRejectedValue(new Error('read only not supported'));
     await expect(createReadRepository({}).choices('a')).rejects.toMatchObject({ code: 'AI_READ_FAILED' });
     expect(connection.execute).not.toHaveBeenCalled();
+  });
+  test('legacy evidence keeps unvalued sums, original amounts and unknown currencies instead of fabricating zero or CNY', async () => {
+    connection.execute.mockImplementation(async ({ sql }) => {
+      if (sql.includes('AS income')) return [[{ income: null, expense: null, count: 2, unpricedCount: '2' }]];
+      if (sql.includes('GROUP BY')) return [[{ direction: 0, category: '餐饮', amount: null, count: 1, unpricedCount: '1' }]];
+      if (sql.includes('DATE_FORMAT')) return [[{ date: '2026-11-06', direction: 0, amount: '100.0000', currency: null, amountCNY: null, category: '餐饮', remark: '' }]];
+      return [[{ count: 2, unpricedCount: '2' }]];
+    });
+    const repo = createReadRepository({ user: 'readonly' }), range = { startDate: '2026-11-01', endDate: '2026-11-06' };
+    const sum = await repo.summary('owner', range);
+    expect(sum).toMatchObject({ income: null, expense: null, unpricedCount: '2', incomplete: true,
+      categories: [expect.objectContaining({ amount: null, incomplete: true })] });
+    const detail = await repo.transactions('owner', { ...range, limit: 10, offset: 0 });
+    expect(detail).toMatchObject({ unpricedCount: '2', incomplete: true,
+      rows: [expect.objectContaining({ amount: '100.0000', currency: null, amountCNY: null })] });
+  });
+  test('account candidates never collapse into duplicate names for the check-card dropdown', async () => {
+    connection.execute.mockImplementation(async ({ sql }) => sql.includes('FROM bus_category') ? [[]]
+      : [[{ id: 'a', name: '测试银行 1234', type: 'debit', tail: '1234' },
+        { id: 'b', name: '测试银行 1234', type: 'debit', tail: '1234' },
+        { id: 'c', name: '测试银行 5678', type: 'debit', tail: '5678' }]]);
+    const { accounts } = await createReadRepository({}).choices('owner');
+    expect(accounts.map(row => row.name)).toEqual(['测试银行 1234', '测试银行 1234（2）', '测试银行 5678']);
+    const [statement] = connection.execute.mock.calls.find(([value]) => value.sql.includes('FROM card_base'));
+    expect(statement.sql).toContain('TRIM(CONCAT(');
+    expect(statement.sql).not.toContain("'未命名账户'");
   });
 });

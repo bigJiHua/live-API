@@ -1,0 +1,19 @@
+{
+  "provenance": "Sanitized existing bc80b83c card-count correction; no live provider or database dependency",
+  "priorMessage": "给我画个饼图 饼图内容是借记卡 信用卡的比例",
+  "priorAnswer": "今天借记卡消费4笔、现金消费1笔；饼图显示借记卡与现金的消费金额占比。",
+  "message": "我说的是当前已有的借记卡和信用卡的数量比例，不是收支哦",
+  "initialQuery": { "datasetId": "card-cards" },
+  "rows": [
+    { "type": "credit", "count": 20 },
+    { "type": "debit", "count": 59 },
+    { "type": "virtual_balance", "count": 1 },
+    { "type": "virtual_cash", "count": 1 }
+  ],
+  "output": {
+    "answer": "明白了，你要的是卡片数量比例。按本人未删除卡片统计：信用卡 20 张、借记卡 59 张，合计 79 张。数量占比上，借记卡约占 74.7%，信用卡约占 25.3%，借记卡数量是信用卡的近 3 倍。此外还有 1 个虚拟余额账户和 1 个虚拟现金账户，不属于借记/信用卡，未计入上面的两类合计。下方的饼图就是按信用卡与借记卡数量画的。",
+    "proposal": null,
+    "proposals": null,
+    "chart": { "datasetId": "card-counts", "type": "pie", "xKey": "type", "yKeys": ["count"], "title": "本人信用卡与借记卡数量比例" }
+  }
+}

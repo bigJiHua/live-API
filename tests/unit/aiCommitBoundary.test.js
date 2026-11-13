@@ -13,8 +13,12 @@ jest.mock('../../src/modules/account/model/credit', () => ({ create: jest.fn() }
 
 const { createAiService } = require('../../src/modules/ai/service');
 const { createDraftStore } = require('../../src/modules/ai/service/drafts');
+const { createSettingsStore } = require('../../src/modules/ai/service/settings');
 const debit = require('../../src/modules/account/model/debit');
 const credit = require('../../src/modules/account/model/credit');
+const { preflightTransaction } = require('../../src/common/services/financialPreflight');
+const { createFinancialWorkflow } = require('../../src/modules/ai/service/financialWorkflow');
+const { createMemoryCandidateStore } = require('../helpers/aiFixture');
 
 const USER = 'owner-a';
 const ID = 'draft-a';
@@ -30,11 +34,12 @@ function fixture(type = 'debit', overrides = {}) {
       trans_date: '2026-11-06', category_id: 'food', account_id: 'card-a', pay_method: '银行卡',
       remark: '午餐', status: 'reviewed', version: 2, missing_fields: [], trace_snapshot: [],
       source: 'user-readonly', expires_at: NOW + 60000, committed_record_id: null, ...overrides },
-    records: [], clock: NOW, failAt: null, categoryPresent: true, categoryName: '餐饮', accountPresent: true,
+    records: [], clock: NOW, failAt: null, categoryPresent: true, categoryName: '餐饮', accountPresent: true, balance: '100000.00',
   };
   let tail = Promise.resolve();
   const operations = [];
   function execute(target, sql, params, inTransaction) {
+    sql = typeof sql === 'string' ? sql : sql.sql;
     operations.push({ sql, params, inTransaction });
     if (/SELECT .*FROM bus_ai_draft/s.test(sql)) {
       if (state.failAt === 'receipt' && inTransaction && target.row.committed_record_id) throw new Error('synthetic receipt failure');
@@ -48,9 +53,21 @@ function fixture(type = 'debit', overrides = {}) {
       return [state.categoryPresent && params[0] === target.row.category_id && params[1] === USER
         ? [{ id: target.row.category_id, name: state.categoryName, type: 'expense' }] : []];
     }
-    if (/SELECT .*FROM card_base/.test(sql)) {
-      return [state.accountPresent && params[0] === 'card-a' && params[1] === USER
-        ? [{ id: 'card-a', name: '日常账户', type }] : []];
+    if (/SELECT .*FROM card_base/s.test(sql)) {
+      const lock = sql.includes('FOR UPDATE'), allCards = !/AND id\s*=\s*\?/.test(sql) && !lock;
+      const owns = allCards ? params[0] === USER : lock ? params[0] === 'card-a' && params[1] === USER : params[0] === USER && params[1] === 'card-a';
+      return [state.accountPresent && owns
+        ? [{ id: 'card-a', name: '日常账户', alias: '日常账户', type, card_type: type, currency: 'CNY', status: '正常',
+          share_pool_id: null, credit_limit: state.balance, temp_limit: '0.00', bill_day: 15, repay_day: 25, update_time: 'stable-fixture' }] : []];
+    }
+    if (/SELECT .*FROM card_foreign_register/s.test(sql)) {
+      return [sql.includes('SUM(') ? [{ total: '0.0000' }] : []];
+    }
+    if (/SELECT .*FROM card_repay/s.test(sql) || /SELECT .*FROM card_bill/s.test(sql)) return [[]];
+    if (/SELECT .*FROM account/s.test(sql)) {
+      if (sql.includes('SELECT reversed_id') || sql.includes('LIMIT 21') || sql.includes('LIMIT 501')) return [[]];
+      return [type === 'credit' ? [] : [{ id: 'opening-income', card_id: 'card-a', currency: 'CNY', direction: 1, amount: state.balance,
+        exchange_rate: '1.00', trans_date: '2026-11-06', category_id: 'salary', reversed_id: null, create_time: 'stable', update_time: 'stable' }]];
     }
     if (/INSERT INTO account/.test(sql)) {
       if (!inTransaction) throw new Error('Formal write outside transaction');
@@ -78,12 +95,14 @@ function fixture(type = 'debit', overrides = {}) {
         target.row.status = 'committed'; target.row.committed_at = new Date(state.clock);
       } else if (sql.includes('SET direction=')) {
         if (!['pending', 'reviewed'].includes(target.row.status)) return [{ affectedRows: 0 }];
-        const [direction, amount, currency, trans_date, category_id, account_id, pay_method, remark, missing] = params;
-        Object.assign(target.row, { direction, amount, currency, trans_date, category_id, account_id, pay_method, remark, missing_fields: JSON.parse(missing) });
+        const [direction, amount, currency, trans_date, category_id, account_id, pay_method, remark, missing, trace] = params;
+        Object.assign(target.row, { direction, amount, currency, trans_date, category_id, account_id, pay_method, remark,
+          missing_fields: JSON.parse(missing), trace_snapshot: JSON.parse(trace) });
         if (sql.includes("status='pending'")) target.row.status = 'pending';
       } else {
         if (!['pending', 'reviewed'].includes(target.row.status)) return [{ affectedRows: 0 }];
         target.row.status = params[0];
+        target.row.trace_snapshot = JSON.parse(params[1]);
       }
       target.row.version++;
       return [{ affectedRows: 1 }];
@@ -95,6 +114,9 @@ function fixture(type = 'debit', overrides = {}) {
   const writeDb = { getConnection: jest.fn(async () => {
     let transaction, unlock;
     const conn = {
+      query: jest.fn(async sql => {
+        expect(sql).toBe('SET TRANSACTION ISOLATION LEVEL READ COMMITTED'); return [[]];
+      }),
       beginTransaction: jest.fn(async () => {
         const previous = tail;
         tail = new Promise(resolve => { unlock = resolve; });
@@ -119,15 +141,36 @@ function fixture(type = 'debit', overrides = {}) {
     categories: [{ id: 'food', name: '餐饮', type: 'expense' }],
     accounts: [{ id: 'card-a', name: '日常账户', type }],
   })) };
-  const service = createAiService({ env, repository, draftStore: store, writeDb,
-    conversationStore: {}, settingsStore: { get: () => null }, now: () => new Date(state.clock) });
+  const financialRepository = { check: (userId, input) => preflightTransaction(executor, userId, input, { now: new Date(state.clock) }),
+    read: work => work(async (sql, params) => (await executor.execute(sql, params))[0]) };
+  const settingsStore = createSettingsStore();
+  settingsStore.save(USER, { apiUrl: 'https://api.deepseek.com', apiKey: env.DEEPSEEK_API_KEY, model: 'deepseek-flash' });
+  const service = createAiService({ env, repository, draftStore: store, writeDb, financialRepository,
+    candidateStore: createMemoryCandidateStore({ now: () => state.clock }),
+    conversationStore: {}, settingsStore, now: () => new Date(state.clock) });
+  // Build the prior review from the real workflow over isolated source rows.
+  // Tests then mutate state and exercise the current transaction checks normally.
+  const original = structuredClone(state.row);
+  const workflow = createFinancialWorkflow({ repository: () => repository, financialRepository: () => financialRepository, draftStore: store,
+    now: () => new Date(state.clock) });
+  const ready = workflow.inspect(USER, { fields: { amount: original.amount, direction: original.direction, currency: original.currency,
+    transDate: original.trans_date, categoryId: original.category_id, accountId: original.account_id, payMethod: original.pay_method, remark: original.remark } },
+  { version: original.version - 1 }).then(result => {
+    state.row.trace_snapshot = [...original.trace_snapshot, { tool: 'financial_review', result: {
+      fieldsDigest: result.financialCheck.fieldsDigest, riskDigest: result.financialCheck.riskDigest,
+      policyVersion: result.financialCheck.policyVersion, forVersion: original.version - 1,
+    } }];
+    operations.length = 0;
+  });
+  const commit = service.commitDraft.bind(service);
+  service.commitDraft = async (...args) => { await ready; return commit(...args); };
   const create = async (payload, conn) => {
     const record = { id: 'record-a', ...payload };
     await conn.execute('INSERT INTO account (id) VALUES (?)', [record]);
     return record;
   };
   debit.create.mockImplementation(create); credit.create.mockImplementation(create);
-  return { state, operations, executor, writeDb, connections, store, service };
+  return { state, operations, executor, writeDb, connections, store, service, ready };
 }
 
 beforeEach(() => jest.clearAllMocks());
@@ -141,6 +184,44 @@ afterEach(() => {
 });
 
 describe.each(['debit', 'credit'])('%s AI commit transaction boundary', type => {
+  test.each(['after-account-lock', 'after-model-return'])('finance switch closing %s rolls back the complete transaction', async stage => {
+    const f = fixture(type); await f.ready;
+    let resolveStarted, resolveRelease;
+    const started = new Promise(resolve => { resolveStarted = resolve; }), release = new Promise(resolve => { resolveRelease = resolve; });
+    const previousEnabled = env.AI_BUSINESS_ENABLED;
+    env.AI_BUSINESS_ENABLED = 'true';
+    const model = type === 'credit' ? credit : debit;
+    if (stage === 'after-account-lock') {
+      const getConnection = f.writeDb.getConnection.getMockImplementation();
+      f.writeDb.getConnection.mockImplementation(async () => {
+        const conn = await getConnection(), execute = conn.execute.getMockImplementation();
+        conn.execute.mockImplementation(async (sql, params) => {
+          const result = await execute(sql, params);
+          if (typeof sql === 'string' && sql.includes('FROM card_base') && sql.includes('FOR UPDATE')) {
+            resolveStarted(); await release;
+          }
+          return result;
+        });
+        return conn;
+      });
+    } else {
+      const create = model.create.getMockImplementation();
+      model.create.mockImplementation(async (...args) => { const record = await create(...args); resolveStarted(); await release; return record; });
+    }
+    try {
+      const pending = f.service.commitDraft(USER, ID, { version: 2 });
+      await started; env.AI_BUSINESS_ENABLED = 'false'; resolveRelease();
+      await expect(pending).rejects.toMatchObject({ code: 'AI_BUSINESS_DISABLED' });
+      expect(model.create).toHaveBeenCalledTimes(stage === 'after-account-lock' ? 0 : 1);
+      expect(f.state.records).toHaveLength(0);
+      expect(f.state.row).toMatchObject({ status: 'reviewed', version: 2, committed_record_id: null });
+      expect(f.connections[0].commit).not.toHaveBeenCalled(); expect(f.connections[0].rollback).toHaveBeenCalledTimes(1);
+    } finally {
+      resolveRelease();
+      if (previousEnabled === undefined) delete env.AI_BUSINESS_ENABLED; else env.AI_BUSINESS_ENABLED = previousEnabled;
+    }
+  });
+
   test('draft, formal record and receipt use one transaction, with owner-bound current locks', async () => {
     const f = fixture(type);
     const receipt = await f.service.commitDraft(USER, ID, { version: 2 });
@@ -176,14 +257,16 @@ describe.each(['debit', 'credit'])('%s AI commit transaction boundary', type => 
     expect(f.state.records).toHaveLength(1);
   });
 
-  test('two simultaneous submissions of one draft produce exactly one record', async () => {
+  test('two simultaneous submissions recover the same receipt and produce exactly one record', async () => {
     const f = fixture(type);
     const results = await Promise.allSettled([
       f.service.commitDraft(USER, ID, { version: 2 }), f.service.commitDraft(USER, ID, { version: 2 }),
     ]);
-    expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter(item => item.status === 'rejected')[0].reason.code).toBe('AI_DRAFT_CONFLICT');
+    const fulfilled = results.filter(item => item.status === 'fulfilled');
+    expect(fulfilled).toHaveLength(2);
+    for (const receipt of fulfilled) expect(receipt.value.committedRecordId).toBe('record-a');
     expect(f.state.records).toHaveLength(1);
+    expect(f.operations.filter(item => /SELECT .*FROM bus_ai_draft.*FOR UPDATE/s.test(item.sql))).toHaveLength(1);
   });
 
   test('lost commit acknowledgement never restores a committed draft or duplicates the record', async () => {
@@ -192,7 +275,7 @@ describe.each(['debit', 'credit'])('%s AI commit transaction boundary', type => 
     expect(f.state.records).toHaveLength(1);
     expect(f.state.row.status).toBe('committed');
     f.state.failAt = null;
-    await expect(f.service.commitDraft(USER, ID, { version: 3 })).rejects.toMatchObject({ code: 'AI_DRAFT_COMMITTED' });
+    await expect(f.service.commitDraft(USER, ID, { version: 3 })).resolves.toMatchObject({ committedRecordId: 'record-a' });
     expect(f.state.records).toHaveLength(1);
   });
 
@@ -273,11 +356,12 @@ describe('persistent draft review and validation boundary', () => {
 
   test('editing a reviewed draft requires a new review before commit', async () => {
     const f = fixture();
+    await f.ready;
     const updated = await f.store.update(USER, ID, 2, { ...fields, amount: '25.00' });
     expect(updated).toMatchObject({ amount: '25.00', status: 'pending', version: 3 });
     await expect(f.service.commitDraft(USER, ID, { version: 3 })).rejects.toMatchObject({ code: 'AI_DRAFT_NOT_REVIEWED' });
     expect(f.state.records).toHaveLength(0);
-    const reviewed = await f.store.act(USER, ID, 3, 'review');
+    const reviewed = await f.service.actOnDraft(USER, ID, { version: 3, action: 'review' });
     await expect(f.service.commitDraft(USER, ID, { version: reviewed.version })).resolves.toMatchObject({ status: 'committed' });
   });
 
@@ -344,5 +428,24 @@ describe('persistent draft review and validation boundary', () => {
       expect(initialize).not.toHaveBeenCalled();
       expect(conn.execute).toHaveBeenCalled();
     } finally { initialize.mockRestore(); }
+  });
+  test.each(['debit', 'credit'])('%s funds changing after review invalidates the proof even when the amount still fits', async type => {
+    const f = fixture(type); await f.ready; f.state.balance = '99999.00';
+    await expect(f.service.commitDraft(USER, ID, { version: 2 })).rejects.toMatchObject({ code: 'AI_RISK_CHANGED' });
+    expect(f.state.records).toHaveLength(0); expect(f.state.row.status).toBe('reviewed');
+    const reviewed = await f.service.actOnDraft(USER, ID, { version: 2, action: 'review' });
+    await expect(f.service.commitDraft(USER, ID, { version: reviewed.version })).resolves.toMatchObject({ committedRecordId: 'record-a' });
+    expect(f.state.records).toHaveLength(1);
+  });
+  test.each(['debit', 'credit'])('%s insufficient current funds block the transaction with no formal rows', async type => {
+    const f = fixture(type); await f.ready; f.state.balance = '1.00';
+    await expect(f.service.commitDraft(USER, ID, { version: 2 })).rejects.toMatchObject({ code: 'AI_FINANCIAL_CHECK_BLOCKED',
+      financialCheck: { reasonCodes: expect.arrayContaining(['INSUFFICIENT_FUNDS']) } });
+    expect(f.state.records).toHaveLength(0); expect(f.state.row.committed_record_id).toBeNull();
+  });
+  test('a legacy reviewed flag without a financial review proof never authorizes the formal insert', async () => {
+    const f = fixture(); await f.ready; f.state.row.trace_snapshot = [];
+    await expect(f.service.commitDraft(USER, ID, { version: 2 })).rejects.toMatchObject({ code: 'AI_RISK_CHANGED' });
+    expect(f.state.records).toHaveLength(0); expect(f.connections[0].rollback).toHaveBeenCalledTimes(1);
   });
 });

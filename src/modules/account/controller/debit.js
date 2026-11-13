@@ -15,8 +15,12 @@ class DebitController {
    */
   async create(req, res) {
     try {
+      const input = req.body.data || req.body;
+      if (input.transferGroupId && input.payType !== '转账') {
+        return res.status(400).json({status:400,code:'ACCOUNT_TRANSFER_GROUP_FORBIDDEN',message:'普通收支不允许携带转账分组'});
+      }
       const transaction = await DebitAccount.create({
-        ...(req.body.data || req.body), // 🔄 2026-10-13（api.md P2-12 同模式）：双路径兼容明文/加密请求
+        ...input, // 双路径兼容明文/加密请求；真实转账分类由模型按本人范围查库确认
         userId: req.userId, // 身份只能来自鉴权结果，禁止请求字段覆盖
       });
 

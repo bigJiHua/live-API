@@ -36,6 +36,7 @@ class DebitAccount {
       const conn = await db.getConnection();
       let created;
       try {
+        await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
         await conn.beginTransaction();
         created = await this.create({ userId, direction, categoryId, payType, payMethod,
           amount, currency, exchangeRate, transDate, remark, cardId, transferGroupId }, conn);
@@ -60,6 +61,20 @@ class DebitAccount {
     }
     const id = idUtils.billId();
     const now = String(Date.now());
+
+    // Legacy Web/APP transfers still use this endpoint for one/two legs.
+    // Only the authenticated owner's live transfer category may select that
+    // accounting path. A caller's payType/group alone cannot bypass ordinary checks.
+    let trustedTransfer = false;
+    if (transferGroupId || payType === '转账') {
+      if (payType !== '转账') throw new Error('普通收支不允许携带转账分组');
+      const [categories] = await executor.execute(
+        'SELECT id,name,type FROM bus_category WHERE id=? AND user_id=? AND is_deleted=0 LIMIT 1',
+        [categoryId,userId]
+      );
+      trustedTransfer = categories[0]?.name === '转账' && ['income','expense'].includes(categories[0]?.type);
+      if (!trustedTransfer) throw new Error('转账必须使用本人有效的转账分类');
+    }
 
     // 从 card_base 获取真实的 card_type
     // 🔒 2026-10-13（api.md P2-5）：实体卡必须存在且归属本人。
@@ -107,7 +122,9 @@ class DebitAccount {
         amount: amount,
         exchange_rate: exchangeRate || 1,
         currency: currency || 'CNY',
-        account_type: finalAccountType
+        account_type: finalAccountType,
+        strictOrdinary: !trustedTransfer,category_id:categoryId,pay_type:payType,trans_date:transDate,
+        transfer_group_id:transferGroupId||null
       }, executor);
 
       if (!settlementResult.valid) {

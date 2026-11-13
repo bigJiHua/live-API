@@ -35,7 +35,10 @@ exports.create = {
       currency: joi.string().default('CNY'),
       exchangeRate: joi.number().min(0.001).precision(5).default(1),
       remark: joi.string().allow('', null),
-      transferGroupId: joi.string().allow('', null),
+      transferGroupId: joi.when('payType', {
+        is:'转账',then:joi.string().max(50).pattern(/^[A-Za-z0-9_-]+$/).allow('',null),
+        otherwise:joi.valid('',null).messages({'any.only':'普通收支不允许携带转账分组'})
+      }),
     }).unknown(true),
   }).unknown(true),
 };

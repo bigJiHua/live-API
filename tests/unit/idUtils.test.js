@@ -16,12 +16,12 @@ describe('ID 生成工具测试', () => {
     expect(`BC_${id}`.length).toBe(50);
   });
 
-  test('billId 生成 50 位大写字母数字 ID', () => {
+  test('billId contains a sortable timestamp and fits the database ID column', () => {
     const id = idUtils.billId();
 
     expect(typeof id).toBe('string');
-    expect(id.length).toBe(50);
-    expect(id).toMatch(/^[0-9A-Z]+$/);
+    expect(id.length).toBeLessThanOrEqual(50);
+    expect(id).toMatch(/^\d{17}[0-9A-Z]{6}$/);
   });
 
   test('连续生成的业务 ID 不应重复', () => {

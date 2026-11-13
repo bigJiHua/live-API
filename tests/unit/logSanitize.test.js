@@ -128,7 +128,7 @@ describe('A2·buildErrorBody 业务异常保留原文案', () => {
 // ==================== B. 邮箱脱敏 ====================
 describe('B·maskEmail', () => {
   it('保留首字符与域名', () => {
-    expect(maskEmail('jihua@163.com')).toBe('j***@163.com');
+    expect(maskEmail('user@example.com')).toBe('u***@example.com');
   });
 
   it('短名邮箱也正确处理', () => {
