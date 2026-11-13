@@ -1,5 +1,7 @@
 # Golden Finance API — 生活管理系统后端
 
+> **接手启动与 env 配置**：先看 [ENV_SETUP.md](ENV_SETUP.md)。提交的 `.env.example` 默认与 Web 配套为 API `7788` / Web `5173`；真实 `.env` 不入库。运行 `npm run env:check -- --db` 检查配置及数据库连接，启动也会自动检查配置。
+
 > **AI 画像实机修复（2026-11-13）**：修复 30 秒硬截止与兼容网关思考耗尽输出，同步容量、冷却和有界重建游标。72 条合成历史约 3.5 秒生成 6 项，原话及持久化通过；API 228 套 / 5227 项、Web 451 项及构建通过。本地 5173／7788 已加载；远端部署、完整登录握手及手机界面未验收，无新增权限。证据及本轮 5 次真实调用见[最终记录](logs/CHANGELOG_2026-11-13.md#ai-画像实机修复与最终验收)与[模块说明](src/modules/ai/README.md#记忆用户画像与自定义规则)。
 
 > **AI 重启恢复衔接（2026-11-13）**：连接波动后只读核对原回执，覆盖进程租约；强杀遗留轮次按本人活动原话与原请求摘要补齐失败历史，使原问题可继续重试。回执读取独立于模型配置暖机，挂起查询可超时释放，晚到旧流不覆盖新状态。详见[当日变更](logs/CHANGELOG_2026-11-13.md#ai-后端波动与重启恢复)。
@@ -429,12 +431,12 @@ cp .env.example .env
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `PORT` | 服务端口（`app.js` 默认 3001，**本仓库 `.env` 为 666**，与 Go 版 7777 隔离） | 3001 |
+| `PORT` | 模板显式设为 7788，与 Web 配套；启动检查要求填写（代码历史回退 3001） | 7788（模板） |
 | `NODE_ENV` | 运行环境（`production` 会触发密钥 fail-fast 与错误脱敏） | development |
 | `DB_HOST` / `DB_PORT` | 数据库主机 / 端口 | localhost / 3306 |
 | `DB_USER` / `DB_PASSWORD` | 数据库用户 / 密码 | root / (空) |
 | `DB_NAME` | 数据库名 | live |
-| `TRUST_PROXY_HOPS` | 反代层数：决定 `req.ip` 取 XFF 的第几段（直连填 0，1 层 nginx 填 1；留空=1） | 1 |
+| `TRUST_PROXY_HOPS` | 反代层数：直连填 0，一层 nginx 填 1；显式留空不信任，未配置时代码回退 1 | 0（模板） |
 | `JWT_SECRET` | JWT 签名密钥。**生产必填**，≥32 位随机串，占位值/过短会拒绝启动 | (必填) |
 | `JWT_EXPIRES_IN` | Access Token 有效期 | 7d |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh Token 有效期 | 30d |
@@ -449,7 +451,7 @@ cp .env.example .env
 | `EMAIL_USER` / `EMAIL_PASS` | 发信账号 / 授权码 | (空) |
 | `AMAP_KEY` | 高德 Web 服务 Key（IP 定位、逆地理编码） | (空) |
 | `IPINFO_TOKEN` | ipinfo.io Token（IP 定位国际回退，可选） | (空) |
-| `REQUIRE_CLIENT_NONCE` | 设为 `true` 强制要求 `x-client-nonce` 头（三端已同步携带，**本仓库 `.env` 已开启**） | false |
+| `REQUIRE_CLIENT_NONCE` | 设为 `true` 强制要求 `x-client-nonce` 头（三端需同步携带） | false |
 | `TOKEN_MAX_SESSION_DAYS` | 会话最长天数，超期强制重登 | 90 |
 | `INIT_ENABLE` | 启用全量初始化 | false |
 | `INIT_SKIP` | 跳过初始化 | false |
@@ -513,7 +515,7 @@ npm start
 2. 系统初始化（增量迁移 / INIT_ENABLE=true 时全量）
 3. 监听端口输出启动信息
 
-默认访问: `http://localhost:<PORT>/api/v1`（`app.js` 兜底 3001；**本仓库 `.env` 已改为 666**，与 Go 版 7777 隔离，两端可并行对照）
+模板配置访问：`http://localhost:7788/api/v1`。实际以自己的 `PORT` 为准；Go 默认监听 7777，两端可并行对照。
 
 ### 运行测试
 

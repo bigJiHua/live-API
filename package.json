@@ -4,6 +4,9 @@
   "description": "个人生活管理系统后端",
   "main": "app.js",
   "scripts": {
+    "env:check": "node tools/env-check.js",
+    "env:check:example": "node tools/env-check.js --example",
+    "test:env": "jest tests/unit/envCheck.test.js --runInBand",
     "start": "nodemon app.js",
     "dev": "nodemon app.js",
     "test": "jest",

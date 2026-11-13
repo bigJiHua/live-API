@@ -1,6 +1,15 @@
 // 1. 环境变量必须最先加载
 require("dotenv").config();
 
+// Direct node/nodemon starts both validate configuration; imports in tests remain isolated.
+if (require.main === module) {
+  const { inspectEnvironment, templateIssues } = require('./tools/env-check');
+  const { errors, warnings } = inspectEnvironment(process.env);
+  errors.push(...templateIssues());
+  for (const warning of warnings) console.warn(`[env] 提示：${warning}`);
+  if (errors.length) throw new Error(`[env] 配置检查失败：\n${errors.join('\n')}\n请按 ENV_SETUP.md 配置后重试。`);
+}
+
 /* ================== 启动期密钥自检 ==================
  * 生产环境：密钥缺失 / 长度不足 / 仍是占位值 → 直接抛错拒绝启动（fail-fast）。
  * 开发环境：打印告警，不打断本地开发。

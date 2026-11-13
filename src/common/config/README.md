@@ -1,5 +1,7 @@
 # 配置层 (Config)
 
+> 接手配置以根目录 [ENV_SETUP.md](../../../ENV_SETUP.md) 与 `.env.example` 为准；`app.js` 已接入启动检查，可先运行 `npm run env:check -- --db`。
+
 配置层包含应用程序的配置文件,如数据库连接、JWT 配置、环境变量管理等。
 
 ## 设计原则
@@ -16,7 +18,7 @@
 ```env
 # 服务器配置
 NODE_ENV=development
-PORT=3000
+PORT=7788
 
 # 数据库配置
 DB_HOST=localhost
@@ -40,7 +42,7 @@ EMAIL_USER=your-email@gmail.com
 EMAIL_PASS=your-email-app-password
 
 # 前端 URL
-FRONTEND_URL=http://localhost:3000
+FRONTEND_URL=http://localhost:5173
 
 # 应用名称
 APP_NAME=生活管理系统
@@ -305,48 +307,11 @@ const authGuard = (req, res, next) => {
 
 ## 配置验证
 
-可以在 `server.js` 中添加配置验证:
-
-```javascript
-const requiredEnvVars = [
-  'DB_HOST',
-  'DB_USER',
-  'DB_PASSWORD',
-  'DB_NAME',
-  'JWT_SECRET'
-];
-
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`缺少必需的环境变量: ${missingEnvVars.join(', ')}`);
-  process.exit(1);
-}
-```
+`app.js` 已使用 `tools/env-check.js` 验证必填项、端口、URL、生产密钥及 AI 条件，不需要新建 `server.js`。运行 `npm run env:check` 可独立检查，追加 `-- --db` 只读检查数据库连接。`DB_PASSWORD` 可为空，但必须与数据库账号实际设置一致。
 
 ## 多环境配置
 
-可以使用不同的 `.env` 文件:
-
-```env
-# .env.development
-NODE_ENV=development
-DB_HOST=localhost
-JWT_SECRET=dev-secret-key
-
-# .env.production
-NODE_ENV=production
-DB_HOST=production-db.com
-JWT_SECRET=prod-secret-key
-```
-
-在启动时加载对应环境的配置:
-
-```javascript
-require('dotenv').config({
-  path: `.env.${process.env.NODE_ENV || 'development'}`
-});
-```
+当前 API 只加载启动目录的 `.env`，并保留系统/进程环境变量优先；不会按 `NODE_ENV` 自动读取 `.env.development` 或 `.env.production`。不同环境分别维护自己的 `.env` 或通过进程管理器注入变量，生产设置 `NODE_ENV=production` 并保留稳定强密钥。Web 的 Vite mode 文件加载规则与 API 不同，见各自配置指南。
 
 ---
 
